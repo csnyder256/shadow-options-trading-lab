@@ -1,0 +1,26 @@
+# ATLAS engine dependencies (Python 3.14 venv).
+# Deterministic spine (M1) needs only the light stack below - indicators are pure-numpy
+# (per docs/08: "Implement support/resistance, gaps, volume-anomaly, relative-strength as
+# your own small unit-tested functions" - better reproducibility than any TA library).
+numpy
+pandas
+pydantic>=2
+PyYAML
+jsonschema
+
+# Test
+pytest
+
+# Scout vision (--scout modality: vision, screenshot source). After install run:
+#   python -m playwright install chromium
+# Not needed for the text scout path or the core engine.
+playwright
+
+# --- Added in later milestones (kept here for reference, install when reached) ---
+# alpaca-py          # M3 data feed + M4 paper broker
+# finnhub-python     # M3 news / earnings calendar
+# instructor         # M2 constrained-decoding retry wrapper
+# outlines           # M2 grammar-constrained JSON
+# keeks              # M1+ Kelly ceiling (we use fixed-fractional as the binding rule)
+# sentence-transformers  # M4 local embeddings for retrieval relevance
+# huggingface_hub[hf_xet]  # model download (already installed)

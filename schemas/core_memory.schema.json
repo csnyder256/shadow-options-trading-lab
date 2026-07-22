@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.local/schemas/core_memory.schema.json",
+  "title": "CoreMemoryBlock",
+  "description": "The always-in-context state block. REGENERATED FROM DISK by the orchestrator at the start of EVERY decision cycle and re-injected into the LLM prompt verbatim. It is never authored or 'remembered' by the model. Because it is re-served each cycle from ground-truth (reconciled broker positions + persisted risk state), context compaction cannot make the model amnesiac about positions or rules. This is the core of the rotating-analyst defense (docs/05 Layer 1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "generated_at",
+    "trading_state",
+    "account",
+    "risk_budget_today",
+    "open_positions",
+    "recent_lessons"
+  ],
+  "properties": {
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "trading_state": {
+      "type": "string",
+      "enum": [
+        "ACTIVE",
+        "REDUCING",
+        "HALTED_DAY",
+        "DISABLED_REVIEW"
+      ]
+    },
+    "tier": {
+      "type": "string",
+      "description": "Current equity tier name from position_sizing.yaml."
+    },
+    "account": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "equity",
+        "settled_cash",
+        "unsettled_cash",
+        "cash_reserve_pct"
+      ],
+      "properties": {
+        "equity": {
+          "type": "number"
+        },
+        "settled_cash": {
+          "type": "number"
+        },
+        "unsettled_cash": {
+          "type": "number"
+        },
+        "cash_reserve_pct": {
+          "type": "number"
+        }
+      }
+    },
+    "risk_budget_today": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trades_used",
+        "daily_drawdown_used_pct",
+        "consecutive_losses",
+        "deployed_today_usd"
+      ],
+      "properties": {
+        "trades_used": {
+          "type": "integer"
+        },
+        "trades_remaining": {
+          "type": "integer"
+        },
+        "daily_drawdown_used_pct": {
+          "type": "number"
+        },
+        "consecutive_losses": {
+          "type": "integer"
+        },
+        "size_multiplier_active": {
+          "type": "number",
+          "description": "From loss-streak / confidence tiers; <=1.0."
+        },
+        "deployed_today_usd": {
+          "type": "number"
+        },
+        "deployment_budget_usd": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "budget_remaining_usd": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      }
+    },
+    "open_positions": {
+      "type": "array",
+      "description": "Each open position WITH its original thesis, stop, target, age, and current P&L. This is what prevents the model from waking up not knowing why a position exists.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "symbol",
+          "direction",
+          "entry_thesis",
+          "stop",
+          "target",
+          "age_sessions",
+          "unrealized_pnl_pct"
+        ],
+        "properties": {
+          "symbol": {
+            "type": "string"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "long",
+              "short"
+            ]
+          },
+          "setup_type": {
+            "type": "string"
+          },
+          "entry_thesis": {
+            "type": "string",
+            "description": "The ORIGINAL reason it was opened. Carried forward as ground truth."
+          },
+          "stop": {
+            "type": "number"
+          },
+          "target": {
+            "type": "number"
+          },
+          "age_sessions": {
+            "type": "integer"
+          },
+          "unrealized_pnl_pct": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "recent_lessons": {
+      "type": "array",
+      "description": "Top-N durable lessons (Reflexion-style) surfaced from the Decision Journal, e.g. 'breakout_with_volume lost 4/5 this month'.",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10
+    },
+    "do_not_repeat_flags": {
+      "type": "array",
+      "description": "Active hard cautions, e.g. setup_types currently flagged as repeated_failed_pattern.",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

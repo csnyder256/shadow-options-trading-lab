@@ -1,0 +1,166 @@
+## math-core
+- MATH-CORE-1 [high] {VERIFY-DIED} p_regain 0DTE double-decays the clock: zero_dte_effective_T is fed the horizon-END model time, violating its own derivation
+- MATH-CORE-2 [high] {VERIFY-DIED} p_regain systematically understates true regain probability 2-3x and its 'conservative-toward-holding' label is backwards
+- MATH-CORE-3 [medium] {unverified(med/low)} zero_dte_decay_rate ramp is not a valid time-value decay model: it leaves 66% of TV alive at expiry close and is SLOWER than BSM after 14:30
+- MATH-CORE-4 [medium] {unverified(med/low)} theta_share books theta as pure loss and omits the gamma earn-back - overstates 'decay dominance' ~50x in EV terms for 0DTE near-ATM
+- MATH-CORE-5 [medium] {unverified(med/low)} Selector still applies the 0DTE theta multiplier the exit engine removed as double-counting, and omits the 365/252 rescale - entry and exit ledgers log theta on two conve
+- MATH-CORE-6 [medium] {unverified(med/low)} vendor_iv fallback plugs calendar-annualized IV into trading-time math: +/-20-31% effective vol error on that path
+- MATH-CORE-7 [low] {unverified(med/low)} trading_T counts a phantom partial session when called on a weekend timestamp
+- MATH-CORE-8 [low] {unverified(med/low)} prob_itm is dead code with a measure mismatch waiting to be wired in
+- MATH-CORE-9 [low] {unverified(med/low)} implied_vol faithfully solves penny-quote far-OTM contracts to extreme IVs - a red-herring feeder, not a solver bug
+## trajectory
+- TRAJECTORY-1 [critical] {U:blocks-goal+U:blocks-goal} Exit rules h/i* are a noise clock: 20-min annualized drift noise (SE ~ 14) vs a ~0.016 decision threshold guarantees a forced sale within ~30-50 minutes of any entry unde
+- TRAJECTORY-2 [high] {R:degrades-edge} w = t^2/(1+t^2) is a scale-free gate that overweights a +/-1400%-annualized-noise estimate ~20-40x relative to any calibrated Bayes weight
+- TRAJECTORY-3 [high] {VERIFY-DIED} Endpoint-only estimator is maximally microstructure-sensitive: one 10bp stale print at a window edge moves t by 0.35 sigma - alone comparable to the entire rule-h thresho
+- TRAJECTORY-4 [high] {VERIFY-DIED} Optional-stopping cadence dependence: the first-match ladder re-samples the noisy t every mark, so the probability of a noise exit compounds with polling frequency - whic
+- TRAJECTORY-5 [medium] {unverified(med/low)} t_stat's sigma is the contract's own solved IV (skew + VRP + 45-min stale carry), not the underlying's vol - evidence is deflated precisely during adverse vol spikes and 
+- TRAJECTORY-6 [medium] {unverified(med/low)} Prior incoherence entry vs exit: selector prices the thesis as a 50% mixture, exit engine's prior is the FULL mu_thesis while valid - the exit holds on twice the drift be
+- TRAJECTORY-7 [medium] {unverified(med/low)} mu_eff saturates p_regain/p_touch on routine moves, creating a buy-high-sell-low oscillator and structurally shadowing rule i*'s designed region
+- TRAJECTORY-8 [medium] {unverified(med/low)} Frozen/halted or unpolled tape reads as 'no evidence' -> full-thesis HOLD: h cannot fire and g is blocked, with only a journal entry as defense
+- TRAJECTORY-9 [low] {unverified(med/low)} er/n_bars/window_min computed but never logged (docstring claims otherwise); defense placeholders threaded as live; the registered mu-window sweep is not reconstructible 
+- TRAJECTORY-10 [low] {unverified(med/low)} Convention slip: mu_hat estimates the LOG drift (mu - sigma^2/2) but every consumer treats it as the PRICE drift mu, double-subtracting sigma^2/2
+## lanes
+- LANES-1 [critical] {U:degrades-edge+R:none} Zero-hysteresis, single-tick, growing-barrier invalidation makes rule (b) a near-guaranteed minutes-scale exit
+- LANES-2 [high] {R:cosmetic+R:degrades-edge} One-per-side daily latch burns at EMISSION, so selector rejections (the observed death mode) permanently disarm the lane for the day
+- LANES-3 [high] {R:cosmetic+R:cosmetic} range_percentile_14d gate is scale-invariant: it deletes a fixed ~43% of trading days and cannot detect a vol regime by construction
+- LANES-4 [high] {U:degrades-edge+U:degrades-edge} Last30's 15%-of-move target cannot arithmetically clear the selector's EV floors at p_thesis=0.5 except on ~2-sigma days
+- LANES-5 [high] {U:degrades-edge+R:degrades-edge} IndexTrend noise band is the MEAN |move|, which pure noise exceeds 42.5% of the time at any boundary
+- LANES-6 [high] {U:degrades-edge+U:degrades-edge} No target-vs-remaining-time feasibility check: late-session fires request full-day-scale moves in minutes and pass the selector as priced lotteries
+- LANES-7 [medium] {unverified(med/low)} p_thesis=0.5 constant: uninformative at entry, thrown away at exit -- the system buys at 50% belief and holds at 100%
+- LANES-8 [medium] {unverified(med/low)} MacroReactionLane has no noise floor on the measured move: `move != 0.0` plus a 20 bps target floor fires coin-flip-direction signals on sub-noise drifts
+- LANES-9 [medium] {unverified(med/low)} Overnight-held index_trend positions are auto-invalidated on the first poll of the next morning, nullifying the 15:45 overnight-evidence grant
+- LANES-10 [medium] {unverified(med/low)} Merge semantics invert invalidation: one always-False lane merged onto an index_trend position disables rule (b) entirely
+- LANES-11 [medium] {unverified(med/low)} Uniform FIRST5_UCURVE_FRAC=0.04 makes the effective RVOL threshold vary ~2x either way by name (the per-name U-curve shape is available and unused)
+- LANES-12 [medium] {unverified(med/low)} build_noise_profile has no recency check: a stale parquet silently drives today's stand-down gate and bands
+- LANES-13 [low] {unverified(med/low)} Minor estimator quirks: self-inclusive percentile floor at 7.1%, and floor-biased noise lookup between sparse minute keys
+- LANES-14 [low] {unverified(med/low)} InPlayORB looseness cluster: sub-$5 pass via or_high, no fire-time window, and sparse-OR false breaks
+## selector - atlas/options/selector.py (17 hard gates -> EV stage -> scoring), the funnel choke point
+- SELECTOR-1 [high] {VERIFY-DIED} Lambda band (<=90) x delta gate (0.40-0.80) is jointly EMPTY for index options at current IV - structural starvation; the registered 0DTE carve-out is unreachable
+- SELECTOR-2 [high] {VERIFY-DIED} hold<=1/3-of-life gate bans ALL DTE-1 contracts before 12:45 ET for rest-of-day signals; combined with SELECTOR-1 the morning index funnel is fully closed
+- SELECTOR-3 [high] {VERIFY-DIED} EV stage measures target ambition, not edge: flat p_thesis=0.5 x a drift that attains the target by construction makes ev_pct ~linear in target size
+- SELECTOR-7 [high] {VERIFY-DIED} Non-index spread gates (<=10% AND <=$0.30) are unpassable for lane-2 catalyst names - the lane has never produced a pick
+- SELECTOR-6 [high] {VERIFY-DIED} OI/volume floors use mismatched clocks: prior-day OI + full-day volume bar judged 5-15 minutes into the session
+- SELECTOR-5 [medium] {unverified(med/low)} Deep-ITM IV solve is ill-conditioned and its failure path mixes clocks (vendor calendar IV applied to trading-time T)
+- SELECTOR-4 [medium] {unverified(med/low)} Score's ev_pct cheapness gradient dominates the +5 delta-preference bonus - picks pin at the delta-gate FLOOR, opposite the declared 0.55-0.75 skew
+- SELECTOR-9 [medium] {unverified(med/low)} theta_day unit error: vendor per-CALENDAR-day theta on a 252-trading-day pipeline (31% understatement) - exit engine corrects itself, selector/ledger do not
+- SELECTOR-8 [medium] {unverified(med/low)} EV-stage gates are mutually inconsistent about transaction costs: ev_vs_spread double-nets (effective 3x spread requirement) while p_profit ignores exit cost
+- SELECTOR-10 [medium] {unverified(med/low)} Inert selector inputs believed active: hv20 (p_touch floor + IV-richness penalty), event_blackout, may_run_overnight
+- SELECTOR-14 [medium] {unverified(med/low)} First-fail rejection telemetry + fixed gate order misattributes the funnel choke (the owner's 'dies at no_quote/spread/OI' is partly an ordering artifact)
+- SELECTOR-11 [medium] {unverified(med/low)} Premium-cap removal + ev% ranking vs fixed-1-contract dollar grading makes lane verdicts premium-mix-dependent
+- SELECTOR-12 [low] {unverified(med/low)} decomposition.delta_capture has the wrong sign for puts
+- SELECTOR-13 [low] {unverified(med/low)} best_dte_outside_skew uses calendar DTE, mislabeling Monday expiries picked on Friday
+## exit-engine (atlas/options/exit_engine.py, with its computational core atlas/options/math.py p_regain/ev_hold/theta_share, trajectory.mu_blend as consumed, and the runner mark-loop feed in scripts/run_options_shadow.py:926-1133)
+- EXIT-ENGINE-1 [critical] {VERIFY-DIED} Rule (b) thesis_invalid is a structurally guaranteed insta-cut for marginal lane-1 entries: no debounce, tick-sampled, against a rising barrier the entry sits epsilon out
+- EXIT-ENGINE-2 [high] {VERIFY-DIED} mu_eff noise amplification: a routine 1-sigma 20-minute move becomes a ±631%/yr drift that swings EV_hold by ~100x the (h) threshold and drives (f)/(g)/(h)/(i*)
+- EXIT-ENGINE-3 [high] {VERIFY-DIED} d2 cost-basis backstop is a breakeven stop armed by spread noise (P~0.99/day on a pure martingale) that overrides positive EV_hold and amputates the right tail the grader
+- EXIT-ENGINE-4 [medium] {unverified(med/low)} (h)'s 'no-view' prior mu=0 plus r-discounting makes EV_hold(mu=0) exactly -r*S*delta*dt: a systematic call-seller / put-never-seller, and the -half-spread threshold is re
+- EXIT-ENGINE-5 [medium] {unverified(med/low)} p_regain's 0DTE horizon double-decays the clock: zero_dte_effective_T is applied to the already-decremented T_now - dt_h, contradicting its own registered derivation ('RE
+- EXIT-ENGINE-6 [medium] {unverified(med/low)} (i*) is near-inert for DTE>=1 - first-passage to the epsilon-near regain barrier tends to 1 under ANY drift, and any drift extreme enough to breach 0.25 trips (h) first; 
+- EXIT-ENGINE-7 [medium] {unverified(med/low)} Objective mismatch: the engine maximizes per-contract mean EV while its promotion gate is PF/skew-based and its entry model prices hold-to-horizon - the 1-contract shadow
+- EXIT-ENGINE-8 [low] {unverified(med/low)} Overnight grant gates: calendar-day DTE inflates runway across weekends and 'named catalyst tomorrow' degrades to 'any macro event day' - the grant is both over- and unde
+- EXIT-ENGINE-9 [low] {unverified(med/low)} Rule (f) post-print 'decision window' never closes: minutes_since_print is unbounded and never resets, so macro positions run an every-mark EV coin from print+15 for life
+- EXIT-ENGINE-10 [low] {unverified(med/low)} IV sentinel/freshness gaps: iv_fresh guards only (i*), stale carried IV counts as fresh for 45 minutes, and the 1e-4 sentinel can grant the 0DTE deep-ITM clock extension 
+## shadow-ledger
+- SHADOW-LEDGER-1 [medium] {unverified(med/low)} theta_paid decomposition mixes per-calendar-day theta with trading-day hold counts, has an inverted sign vs spread_paid, and keeps a 0DTE multiplier convention the exit e
+- SHADOW-LEDGER-2 [high] {U:degrades-edge+U:degrades-edge} Rebuild fails open on an unreadable exits file (mass position resurrection) and append has no torn-line guard; the grader never dedupes exits by position_id
+- SHADOW-LEDGER-3 [high] {U:degrades-edge+R:cosmetic} Forced exits are graded at stale fallback NBBOs with no fill-provenance field in the exit record - 0DTE/collapsed-book losers book phantom exit value on the WORST grading
+- SHADOW-LEDGER-4 [medium] {unverified(med/low)} config_hash is stamped on every entry but read by nothing downstream - lane PASS verdicts pool across entry cohorts
+- SHADOW-LEDGER-5 [low] {unverified(med/low)} BASE_FILL_FRAC = 0.35 is an unregistered constant - only the WORST ledger's fill definition is pre-registered
+- SHADOW-LEDGER-6 [low] {unverified(med/low)} peak_bid initializes to 0.0 on a fresh live position but to entry bid on rebuild/replay - replay.py's 'exactly like live' claim is false
+- SHADOW-LEDGER-7 [low] {unverified(med/low)} Rebuild re-reads entire ledger files inside per-entry loops - O(entries x (entries + marks)) day-roll cost that grows quadratically
+- SHADOW-LEDGER-8 [low] {unverified(med/low)} Schema incoherence cluster: one-sided-quote mid conventions disagree, per-ledger gross is a duplicated global, and contracts is hardcoded to 1 against the registered scal
+## runner
+- RUNNER-1 [high] {VERIFY-DIED} Premarket ticks contaminate LiveBarBuilder session state: svwap and the mu_hat window are built from 08:30-09:29 bars (incl. prevclose-echo bars)
+- RUNNER-2 [high] {VERIFY-DIED} b_thesis_invalid hair-trigger is structural: invalidation reads a 10-second tick against the same zero-hysteresis band that admitted the entry with epsilon margin
+- RUNNER-3 [high] {VERIFY-DIED} Overnight positions are thesis-judged by TODAY's fresh lane instances in TODAY's reference frame, structurally defeating the overnight grant
+- RUNNER-4 [high] {VERIFY-DIED} Lane 2 armed with a STALE hunt list: no session_date check and a single 08:30 read - live today (07-16) the shadow is hunting 07-15's candidates
+- RUNNER-5 [medium] {unverified(med/low)} may_overnight flips on any >=1-minute bar-completion delay, silently rejecting all DTE<2 contracts for an intraday signal
+- RUNNER-6 [medium] {unverified(med/low)} Backfill bounded-retry is burned pre-open every day (3 attempts vs a structurally-empty 09:30+ query) and gives a mid-session restart only ~30 s of tolerance; budget reje
+- RUNNER-7 [medium] {unverified(med/low)} Backfill-era signals within TTL proceed to ENTRY with a stale S (the _on_signal backfill flag is dead), against live chain NBBO
+- RUNNER-8 [medium] {unverified(med/low)} Lane merges drop the merged signal's protective context (print_minute / planned_exit_minute) while making rule b unreachable via never-invalidating lanes
+- RUNNER-9 [medium] {unverified(med/low)} _roll_day latches the new day before rebuilding state: one transient exception mid-roll kills the whole day's lanes (stale latches, yesterday's clocks) with no retry
+- RUNNER-10 [medium] {unverified(med/low)} Zero-bid books make losers unmarkable: the exit engine is never consulted and the eventual forced exit grades at a stale mark or even entry NBBO
+- RUNNER-11 [low] {unverified(med/low)} C5 shock deque survives the day roll: the overnight gap fires a spurious price_shock and pollutes the trailing baseline
+- RUNNER-12 [low] {unverified(med/low)} _trading_days_held hardcodes the 960 close: entry-day fraction overstated up to ~4x on half days; after-hours minutes counted as trading time
+- RUNNER-13 [low] {unverified(med/low)} load_shadow_config's promised per-key type tolerance does not exist; typo'd keys are silently ignored
+- RUNNER-14 [low] {unverified(med/low)} Sparse-tick bar fidelity: OR height biased low from <=6 last-trade samples/min, and thin names emit echo bars at a stale last price stamped with receive time
+## events-calendar (atlas/options/events.py + atlas/options/session_calendar.py)
+- EVENTS-CALENDAR-1 [high] {VERIFY-DIED} 2027 rollover silently disarms the entire macro-protection layer and the holiday calendar
+- EVENTS-CALENDAR-2 [medium] {unverified(med/low)} FRED upgrade path is dead (no key) so a static mirrored table is the sole live source, with zero drift detection - and 2026 already proved reschedules happen
+- EVENTS-CALENDAR-3 [medium] {unverified(med/low)} FOMC presser modeled as a point event: 'all clear' at 14:46 lands mid-press-conference, and lane 3 enters on a 31-minute-stale pre-presser direction
+- EVENTS-CALENDAR-4 [medium] {unverified(med/low)} CPI/NFP blackouts are 100% premarket - print days have zero RTH event protection, enabling an opposite-direction double-fire at the open
+- EVENTS-CALENDAR-5 [low] {unverified(med/low)} Overnight-grant 'next trading day' is computed with a weekday-only skip, ignoring the session calendar one import away
+- EVENTS-CALENDAR-6 [low] {unverified(med/low)} An 'open' Tradier row missing close_min silently overrides the known half-day table with a 16:00 close
+- EVENTS-CALENDAR-7 [low] {unverified(med/low)} options_close_minute is dead code whose docstring claims it powers the late-close marking mode
+- EVENTS-CALENDAR-8 [low] {unverified(med/low)} is_trading_day is journal-only inside the shadow: holiday sessions run ungated, and a test comment enshrines the wrong reason it is safe
+- EVENTS-CALENDAR-9 [low] {unverified(med/low)} A fresh fallback-source cache pins out an available upgrade source for up to 7 days in both calendars
+## iv-archive
+- IV-ARCHIVE-1 [high] {R:cosmetic+R:cosmetic} iv_rank is None for every possible entry until at least 2026-07-24, and the documented VIX/VXN warm-up fallback was never built - the EV-max selector runs with zero vol-r
+- IV-ARCHIVE-2 [high] {U:degrades-edge+U:cosmetic} Even after warm-up, iv_rank is structurally a no-op: a per-underlying constant subtracted from scores that are only sorted within one selector call
+- IV-ARCHIVE-3 [medium] {unverified(med/low)} Tenor band [0,4] mixes weekend-calendar-deflated Friday IVs into a min-max rank, distorting future ranks by tens of points
+- IV-ARCHIVE-4 [medium] {unverified(med/low)} iv_rank ranks YESTERDAY'S snapshot, not live IV - it will miss the same-day vol spikes that matter most at entry time
+- IV-ARCHIVE-5 [medium] {unverified(med/low)} 10-session warm-up gate contradicts the module's own 60-session claim and activates a pure-noise min-max statistic with a -10-point score penalty
+- IV-ARCHIVE-6 [medium] {unverified(med/low)} Hardcoded tenor_dte=2 means iv_rank can only ever mature for SPY/QQQ/IWM - InPlayORB hunt names get None forever
+- IV-ARCHIVE-7 [medium] {unverified(med/low)} Snapshotter dies silently: missing non-shadow token or failed quote batch exits 0 with no heartbeat or page - unrecoverable history gaps extend the warm-up clock invisibl
+- IV-ARCHIVE-8 [low] {unverified(med/low)} Solved-from-mid fallback floors 0-DTE time at half a day, understating a 15:45 ET 0-DTE IV by ~7x when the ORATS block is missing
+- IV-ARCHIVE-9 [low] {unverified(med/low)} The 4,289-row legacy seed is dead weight: 2 days of history in a tenor-30 bucket that no production query can ever read
+## grader
+- GRADER-1 [high] {VERIFY-DIED} PASS bar is a fixed-threshold filter, not a significance test: ~36% false-PASS per lane at N=25 under a zero-net-edge null, ~63% with nightly re-grade peeking, ~99% famil
+- GRADER-2 [high] {VERIFY-DIED} Evidence machine cannot conclude on any actionable timescale: N>=25 per lane at ~0.14 fires/day means 6 months to years per verdict, and no pooled cross-lane row exists t
+- GRADER-3 [medium] {unverified(med/low)} Concentration gate drifted from its pre-registered definition, and its abs-day-sum construction both misses registered concentration and false-FAILs legitimately clustere
+- GRADER-4 [medium] {unverified(med/low)} All-USD lane stats after the premium-cap removal let one expensive contract dominate mean, PF and top-day share - no %-of-premium metric exists
+- GRADER-5 [medium] {unverified(med/low)} Schema falsification gate only protects ledgers+rule; day, lanes, and decomposition fields fail soft (0.0 / epoch-string / '?'), so the 2026-07-09 silent-drift bug class 
+- GRADER-6 [medium] {unverified(med/low)} Expired-unexited process-gap positions are invisible on expiry night (expy >= today_d skips them), which is precisely the 0DTE common case; terminal intrinsic can also us
+- GRADER-7 [low] {unverified(med/low)} No dedup of exit rows by position_id - a duplicated line double-counts into n, mean, PF; duplicate entry position_ids silently last-win for the risk-flag join
+- GRADER-8 [low] {unverified(med/low)} Merged multi-lane exits are fully double-counted in every lane: lane verdicts are correlated (aggravating multiple comparisons) and cross-lane sums exceed portfolio P&L; 
+- GRADER-9 [low] {unverified(med/low)} theta_paid sign convention inconsistent with spread_paid: 'paid' totals are negative, and theta is excluded from the cost-visibility falsification entirely
+- GRADER-10 [low] {unverified(med/low)} Cosmetic/operational: verdict trichotomy conflates failure causes; n_today zeroes on a past-midnight run; GO_LIVE_N appears only in a display string
+## replay-lab (atlas/options/replay.py + scripts/run_overnight_lab.py - the paired-replay counterfactual lab, its grid/AB/efficiency/questions/LLM stages, and the ATLAS-OvernightLab schedule/guard plumbing)
+- REPLAY-LAB-1 [high] {VERIFY-DIED} Quote capture stops at the live exit, so both replay stages are one-sided: no variant can ever be credited for holding longer than the live engine
+- REPLAY-LAB-2 [high] {VERIFY-DIED} thesis_valid is replayed, not recomputed, and rule (b) precedes every swept parameter in both engines - the A/B has zero discriminating power on the exact rule under owne
+- REPLAY-LAB-3 [high] {R:cosmetic} Grid cohort gate (>=2 quote rows) excludes every first-mark exit - the grid has replayed 0% of all real trades and systematically excludes the fast-cut population
+- REPLAY-LAB-5 [medium] {unverified(med/low)} exit_engine_ab silently drops engine_errors - a variant that crashes on every row is indistinguishable from a patient one
+- REPLAY-LAB-6 [medium] {unverified(med/low)} AB variants replay half-day paths with normal-day clocks - future clock-rule divergence will be misattributed to engine differences
+- REPLAY-LAB-7 [medium] {unverified(med/low)} Runner writes the quote row only after a successful decide_exit - engine-error marks update live peaks invisibly, breaking replay peak fidelity in exactly the cases the A
+- REPLAY-LAB-4 [medium] {unverified(med/low)} exit_grid best_variant has no N floor and tie-breaks lexicographically - an all-tie cohort names 'stop-0.75_take2.0_trail25' best by alphabet
+- REPLAY-LAB-11 [medium] {unverified(med/low)} Grid fills only at stored-mark granularity - systematically flatters take variants and penalizes stop variants vs continuous execution
+- REPLAY-LAB-12 [medium] {unverified(med/low)} variant_would_hold is a write-only flag: the overnight/EV counterfactual is counted, never graded
+- REPLAY-LAB-8 [medium] {unverified(med/low)} exit_efficiency mixes mid-based peaks with worst-ledger fills and has no robustness guard - and has never produced a number
+- REPLAY-LAB-10 [low] {unverified(med/low)} Guard/schedule interplay verified working (15:25 CT = 16:25 ET passes the 16:15 guard), but missed-start recovery can land inside RTH and silently lose the night
+- REPLAY-LAB-9 [low] {unverified(med/low)} Lab's self-declared write contract is false: job C writes to catalyst memory and runtime/lab/, beyond 'ONLY the report + lock/heartbeat'
+## premarket-crew
+- PREMARKET-CREW-1 [high] {VERIFY-DIED} No freshness check on runtime/hunt_list.json - lane 2 arms on a stale, possibly days-old AI watchlist
+- PREMARKET-CREW-2 [high] {VERIFY-DIED} Crew worst-case runtime (gather + 5 sequential 90s provider calls) exceeds the 300s _run_crew kill window - timeout leaves the hunt list silently stale
+- PREMARKET-CREW-3 [high] {VERIFY-DIED} Consensus ranking collapses to ALPHABETICAL ordering on single-model days, and the runner's 10-name cap consumes exactly that order
+- PREMARKET-CREW-5 [high] {VERIFY-DIED} Earnings gather is today-only - the packet structurally omits yesterday's after-close reporters, the richest morning-gap cohort
+- PREMARKET-CREW-8 [high] {VERIFY-DIED} The deterministic gap-scan is dead code (lane2_scan_symbols=[]) - five flaky free LLMs are the SOLE lane-2 universe source, with no deterministic fallback
+- PREMARKET-CREW-4 [medium] {unverified(med/low)} Earnings packet truncation is alphabetical at 80 rows - heavy earnings days silently drop all late-alphabet reporters
+- PREMARKET-CREW-6 [medium] {unverified(med/low)} Movers screen's $5M dollar-volume floor multiplies price by IEX-scale volume - effective floor ~$150-250M consolidated, censoring the small/mid-cap in-play cohort
+- PREMARKET-CREW-7 [medium] {unverified(med/low)} gap_pct=0.0 and catalyst=True hardcoded for every crew name - constant/wrong covariates written to the entry ledger and an inert priority sort
+- PREMARKET-CREW-9 [medium] {unverified(med/low)} Observed first5_rvol values are numerically implausible (PFE 11.59, DAL 65.08) - the RVOL gate's effective scale needs verification before its >=5 threshold means anythin
+- PREMARKET-CREW-10 [medium] {unverified(med/low)} Single-shot average_volume backfill at day-roll - one transient quote failure stands the whole lane-2 universe down for the entire day
+- PREMARKET-CREW-11 [medium] {unverified(med/low)} day_briefing.json has zero consumers - the earnings enrichment, scorecard digest, calendar flags, and vix field are dead outputs
+- PREMARKET-CREW-12 [low] {unverified(med/low)} No packet-membership gate on crew symbols - hallucinated tickers can occupy hunt-list slots (the sibling news-flag classifier has the rule; the crew does not)
+- PREMARKET-CREW-13 [low] {unverified(med/low)} Catalyst-event staleness edges: the 48 calendar-hour cliff kills Friday-night catalysts on Monday, while unparseable timestamps and the older-artifact fallback can smuggl
+- PREMARKET-CREW-14 [low] {unverified(med/low)} Stale comment: load_hunt_list claims 'lane-2 gating reads' the catalyst bool - nothing gates on it anywhere
+## news-covariates
+- NEWS-COVARIATES-1 [medium] {unverified(med/low)} Multi-source items advance NewsTap's single cursor, permanently skipping Benzinga headlines after any Benzinga lag/outage > 120s
+- NEWS-COVARIATES-2 [medium] {unverified(med/low)} Process-local dedup + unwindowed Finnhub general + Benzinga updated_at re-serves put duplicate stories into the stream across restarts - 158 duplicate rows live; a re-ser
+- NEWS-COVARIATES-3 [medium] {unverified(med/low)} Per-source health heartbeat counts raw fetched items, so a frozen/stale feed reads permanently healthy - the exact silent-failure class it was built to expose
+- NEWS-COVARIATES-4 [medium] {unverified(med/low)} Symbol-state poller hits the nasdaqtrader halt RSS every 45s, 1.33x its own documented <=1/min courtesy limit - throttle/ban risk silently fail-opens the halt gate
+- NEWS-COVARIATES-5 [medium] {unverified(med/low)} parse_halt_rss equal-key tie-break (key >= prior) keeps the document-LAST row, which can resurrect a stale non-resumed halt row over the resumed one in a newest-first fee
+- NEWS-COVARIATES-6 [low] {unverified(med/low)} news_flag_tap LLM join-back is last-record-wins while flag validation is first-row-wins - flag metadata can come from a different headline than the classification
+- NEWS-COVARIATES-7 [low] {unverified(med/low)} sec_suspended and ssr_active are dead in the live wiring - the poller hardcodes them off and nothing calls update_ssr, yet the entry path and selector still carry handlin
+- NEWS-COVARIATES-8 [low] {unverified(med/low)} NewsFlagsCache doc contract drift: refreshed every ~10s tick (not 'once per reval sweep, never per tick') and queries are O(64) ring scans, not O(1)
+- NEWS-COVARIATES-9 [low] {unverified(med/low)} news_count_60m has unstable semantics (tier-0 counts per-record, LLM counts per-burst-symbol, cross-provider same-story double-admits) - noisy covariate and occasional do
+## tradier-feed (atlas/collect/tradier_data.py)
+- TRADIER-FEED-1 [high] {VERIFY-DIED} Retry loop covers only HTTP 429 - timeouts/5xx/connect errors are first-failure-fatal, and the chain-fetch caller kills the whole signal on one blip
+- TRADIER-FEED-2 [medium] {unverified(med/low)} Retry-After honored uncapped inside a single-threaded loop; HTTP-date form crashes float(); '0' header hammers
+- TRADIER-FEED-3 [medium] {unverified(med/low)} Quote parse discards trade/bid/ask timestamps - stale quotes become fresh ticks, so a halted name manufactures flat bars indefinitely
+- TRADIER-FEED-4 [medium] {unverified(med/low)} Vendor-null and true-zero are the same 0.0 - a genuinely zero-bid book reads as 'no quote', un-marking a collapsing position and under-recording the loss on the grading l
+- TRADIER-FEED-5 [medium] {unverified(med/low)} Backfill is RTH-only (session_filter='open') while live polling starts pre-open with no lower gate - restart vs continuous runs disagree on session VWAP
+- TRADIER-FEED-6 [low] {unverified(med/low)} last<=0 fallback fabricates a price (close -> prevclose) with no provenance flag
+- TRADIER-FEED-7 [low] {unverified(med/low)} Layered rate caps are incoherent: the documented 60/min shadow share only binds HunterFeed polls; direct calls ride a 100/min client cap, over-committing the 120/min acco
+- TRADIER-FEED-8 [low] {unverified(med/low)} from_local_config violates its returns-None contract (only OSError caught) and reads utf-8 instead of utf-8-sig; the launcher preflight uses this stricter parser while th
+- TRADIER-FEED-9 [low] {unverified(med/low)} TOption.mid falls back to a possibly hours-stale last; the unguarded consumer is the EOD IV snapshot's ATM solver
+- TRADIER-FEED-10 [low] {unverified(med/low)} get_daily_history over-fetches its window and has no live options-path consumer (dead surface)

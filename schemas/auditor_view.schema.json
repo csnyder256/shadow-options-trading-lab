@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.local/schemas/auditor_view.schema.json",
+  "title": "AuditorView",
+  "description": "The ONLY thing the adversarial Risk Auditor model (Qwen3.6-27B) is allowed to emit. Enforced by constrained decoding. The auditor is fed an ANONYMIZED thesis packet (no analyst identity, scores, or recommendation) and its sole job is to invalidate the trade. It owns risk_flags + risk_score and NOTHING that could raise size, add a support sub-score, or emit a recommendation - so it can only ever subtract (risk_is_subtractive_only). The orchestrator merges this with an AnalystView to assemble trade_proposal.schema.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "symbol", "risk_flags", "risk_score"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "0.1" },
+    "symbol": {
+      "type": "string",
+      "pattern": "^[A-Z.]{1,6}$",
+      "description": "Must equal the AnalystView symbol; the merge asserts agreement."
+    },
+    "risk_flags": {
+      "type": "array",
+      "description": "Every risk from the controlled vocabulary that genuinely applies.",
+      "items": {
+        "type": "string",
+        "enum": ["earnings_risk", "low_liquidity", "unusual_volatility", "weak_signal", "contradictory_indicators", "market_weakness", "sector_weakness", "overexposure", "concentration", "news_risk", "gap_risk", "over_confidence", "repeated_failed_pattern", "prompt_injection_suspected"]
+      },
+      "uniqueItems": true
+    },
+    "risk_score": { "type": "integer", "minimum": 0, "maximum": 100, "description": "HIGHER = MORE DANGEROUS. Feeds the deterministic veto (>= risk_veto_threshold rejects). Be calibrated, not generous." },
+    "adversarial_notes": { "type": "string", "maxLength": 1200, "description": "The strongest case for rejecting the trade. For the journal and the human; not used arithmetically." }
+  }
+}

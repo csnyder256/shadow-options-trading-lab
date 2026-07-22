@@ -1,0 +1,6 @@
+# Research/backtest-only dependencies (NOT needed by the live trading path).
+# Install into the venv: .venv\Scripts\python.exe -m pip install -r requirements-backtest.txt
+yfinance>=1.4        # deep (~20yr) split/dividend-adjusted daily history
+pyarrow>=24          # parquet price cache
+lxml>=6              # pandas.read_html for the Wikipedia S&P 500 constituents
+# pandas / numpy / requests come in via the live requirements (alpaca-py).

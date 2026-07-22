@@ -1,0 +1,238 @@
+# risk_limits.yaml - DETERMINISTIC HARD CONSTRAINTS
+# The Risk Engine (code) reads this file. It is the highest authority in the system.
+# No AI component may read around, override, or relax any value here.
+# Changing a value is a human act: edit -> review -> commit -> redeploy. No live edits.
+# Doc: docs/03_risk_engine.md
+version: 0.1
+
+# ---- Per-trade risk -------------------------------------------------------
+# Retuned 2026-06-21 to a trend-following profile (research-backed): volatility-based stops,
+# a trailing exit to ride winners, and >=2:1 reward:risk. See trailing_stop below.
+per_trade:
+  per_trade_risk_pct: 3.5          # max % of equity at risk via the initial stop distance. NOTE (2026-07-02):
+                                   # in tier1 this ceiling is INERT -- the 21% position cap x 8% max stop width
+                                   # bounds real risk at 1.68% of equity, so the risk budget can only bind if
+                                   # hard_stop_pct is ever widened past ~16.7%. Pre-set headroom, not a change.
+  hard_stop_pct: 8.0               # MAX initial stop WIDTH; the actual stop is ATR-based but never wider than this
+  take_profit_pct: 25.0            # FAR backstop only (locks in a parabolic spike); the trailing stop is the real exit
+  min_reward_risk: 2.0             # trend/momentum wants >=2:1 (breakeven win-rate ~33%); was 1.5 (needed 40%)
+  require_live_stop: true          # no position may exist without a live protective stop
+  defined_risk_options_only: true  # NEVER naked / undefined-risk options
+  limit_orders_only: true          # never market orders. DOCUMENTED EXCEPTION (2026-07-03, truthful-
+                                   # config fix): an ARMED-fractional entry goes out as MARKET because RH
+                                   # only fills fractional on market+regular-hours - that path is guarded
+                                   # by the fresh-exec-quote gate (spread + collar) at send, and Guardian
+                                   # exits / dead-man flattens are market by design (a protective exit
+                                   # must fill). Everything else (whole-share entries, resting stops) is
+                                   # limit/stop as stated.
+
+# ---- Trailing stop (Chandelier exit) --------------------------------------
+# "Ride the trend; exit when it turns down." stop = highest_high_since_entry - atr_multiple x ATR(entry).
+# Ratchets UP only, never down. The initial stop (at entry) is the floor; as price makes new highs the
+# stop follows, locking in gains. The bracket uses position_sizing.yaml: sizing.atr_multiple (kept in
+# sync here); the 2026-06-21 historical sweep picked 3.5 (wider trail rode winners better OOS).
+trailing_stop:
+  enabled: true
+  atr_multiple: 3.5
+
+# ---- Per-setup exit style -------------------------------------------------
+# Momentum/trend setups RIDE the trailing stop (open-ended winners). Mean-reversion setups exit
+# at a FIXED target (small, predictable moves back to the mean - trailing adds no value there).
+# Research: trailing suits trends; fixed targets suit reversion. Any setup_type not listed under
+# `trailing` defaults to fixed-target.
+setup_exits:
+  # 2026-07-07 (M6 buy-low/sell-high): the price-action archetypes get OPPOSITE exits. supported_dip is
+  # mean-reversion -> FIXED near target (snap back to the mean) + a short time-stop; early_wave is trend
+  # continuation -> RIDES the Chandelier trail. The core publishes a structural stop (core_stop) and a mean
+  # target (core_target) that _compute_bracket uses for a NEAR, intraday-reachable target (the whole point:
+  # actually SELL into the pop instead of only cutting losers at EOD).
+  trailing: [breakout_with_volume, momentum_continuation, relative_strength_leader, early_wave]
+  fixed_target: [range_reversion, pullback_in_uptrend, supported_dip]
+  fixed_target_reward_risk: 2.0    # mean-reversion take-profit = entry + this x initial stop distance
+                                   # (a FLOOR: the actual target = max(this R:R level, the core's mean target))
+  reversion_time_stop_bars: 5      # M6: a mean-reversion dip snaps back FAST (Connors RSI-2 resolves in ~3-5
+                                   # bars); a fixed-target lot that hasn't reverted by N bars is cut (time_stop).
+                                   # Backtest = N daily bars; live, non-reverting dips are bounded by the
+                                   # losers-only EOD-flat + the global session time-stop. Trailing riders are
+                                   # unaffected (they keep the longer time_stop_sessions_trailing leash).
+
+# ---- Frequency & concurrency ----------------------------------------------
+# 2026-07-02 REDESIGN (post-FINRA-4210: PDT + day-trade counting are DEAD as of 2026-06-04; RH migrated
+# day one). Trade COUNT is no longer limited -- the throttle is MONEY DEPLOYED PER DAY, which on a CASH
+# account is the natural constraint (money spent then freed by a sale only recycles at T+1; RH's agentic
+# buying_power excludes unsettled proceeds server-side, empirically proven 2026-07-01).
+#   CASH allowance            = daily_deployment_pct/100 x (settled_cash + deployed_today)  [deposit-aware]
+#   INTRADAY_MARGIN allowance = margin_daily_deployment_pct/100 x day_start_spendable       [anchored: bp
+#   re-credits sale proceeds under margin, so a live-bp formula would ratchet upward per round trip]
+frequency:
+  max_trades_per_day: 0            # 0 = the COUNT gate is OFF (budget governs). trades_used_today is
+                                   # still counted for display; --max-trades N re-arms this as an
+                                   # emergency brake for a special day.
+  daily_deployment_pct: 0   # 2026-07-09 OWNER: OLD ENGINE BUYING OFF (was 95). Zero budget = the buy
+                            # cascade skips every cycle; Guardian/exits/settlement/journaling all run
+                            # normally; existing lots ride to natural exits. The OPTIONS SHADOW is the
+                            # sole new-decision engine. NOTE: the control-panel dial writes this key
+                            # with a 40-100 clamp - moving the dial would RE-ARM buying; leave it alone
+                            # until an options go-live decision. Restore 95 to resume equity buying.         # % of settled cash deployable per day (CASH regime)
+  margin_daily_deployment_pct: 200 # % of day-start spendable per day when account_regime=INTRADAY_MARGIN
+                                   # (proceeds recycling ~2x turnover; user keeps borrowing OFF)
+  max_concurrent_positions: 8      # APPLIED 2026-07-03 (user-directed, with the ~$400 funding): 8 slots
+                                   # x tier1 16% x 0.75 conf ~ 96% ~ the 95% daily budget. Same total
+                                   # worst-case open risk as the old 6 x 21% shape (~10%), spread over 2
+                                   # more independent bets = LLN variance reduction at equal risk. Pairs
+                                   # with position_sizing tier1 max_position_pct 16 - keep them in sync.
+  max_orders_per_decision: 1       # runaway-loop guard. NOTE: the budget math reads the account snapshot
+                                   # once per cycle, which is safe ONLY while this stays 1.
+  require_ack_before_next_order: true
+  max_order_submit_rate_per_min: 6 # throttle
+
+# ---- Behavioral prohibitions (enforced structurally) ----------------------
+prohibitions:
+  no_averaging_down: true
+  no_pyramiding_into_losers: true
+  no_martingale: true              # no increasing size after a loss
+  no_revenge_trading: true         # enforced via loss-streak throttle + cooldown
+
+# ---- Concentration caps ---------------------------------------------------
+concentration:
+  single_stock_max_pct: 35         # was 25; raised so tier1's 33% position cap governs at $250
+                                   # (a 25% single-name cap = only 50% deployed across 2 names - too idle).
+                                   # Higher tiers are limited by their own (lower) max_position_pct, so this
+                                   # global backstop only affects the aggressive tier1.
+  single_sector_max_pct: 40        # still forces 2 same-sector names to diversify (sector <= 40%)
+  single_thesis_max_pct: 40        # correlated-thesis cluster cap
+
+# ---- Cash & settlement ----------------------------------------------------
+cash_and_settlement:
+  account_regime: BROKER_BP        # CASH | BROKER_BP | OLD_PDT | INTRADAY_MARGIN
+                                   # BROKER_BP (2026-07-03, the margin-ready default): spend what the
+                                   # broker's own buying-power figure grants (the RH adapter already maps
+                                   # settled_cash to agentic bp, fail-closed), CAPPED at
+                                   # margin_daily_deployment_pct x day-start spendable. On today's CASH
+                                   # account RH bp excludes unsettled proceeds -> numerically IDENTICAL to
+                                   # CASH (cap never binds). If/when the agentic account gains margin
+                                   # buying power (bp re-credits sale proceeds), freed capital redeploys
+                                   # same-day up to the ~2x turnover cap with ZERO config change. A broker
+                                   # insufficient-funds reject latches budget_exhausted_on for the session
+                                   # (risk engine gate 9c) so a wrong local model can never spam orders.
+  settlement_days: 1               # T+1 (stocks & options since 2024-05-28)
+  buy_with_settled_cash_only: true
+  block_sell_of_unsettled_funded_position: true   # prevents Good-Faith Violations
+  forbid_pay_by_selling_same_security: true       # prevents freeriding
+  gfv_lockout_count_12mo: 3        # INERT (2026-07-02 audit): counters are dead code; RH's agentic
+  freeride_lockout_count_12mo: 1   # buying_power excludes unsettled proceeds server-side, so GFV/freeride
+                                   # are structurally impossible under the settled-cash sizing ceiling.
+  # OLD_PDT is a legacy NO-OP: FINRA 4210 amendments killed PDT counting 2026-06-04; RH migrated day one.
+  old_pdt_max_day_trades_per_5_biz_days: 3        # inert
+  # If account_regime == INTRADAY_MARGIN (broker migrated, post-2026-06-04):
+  intraday_margin_min_equity: 2000                # Reg-T margin-credit minimum (informational; RH enforces)
+
+# ---- Daily / weekly drawdown kill switches (include unrealized PnL+fees) ---
+drawdown:
+  daily_max_drawdown_pct: 6.0      # 2026-07-02 max-growth retune (was 4): with 6 concurrent slots at ~0.85%
+                                   # real risk each (21% cap x 0.75 conf x ~5.4% stop), a 6-loss day lands
+                                   # ~-4.3% after the loss-streak reducer -- 4% would halt on normal red days.
+  weekly_max_drawdown_pct: 9.0     # configurable 8-10; breach -> DISABLED_REVIEW
+  include_unrealized: true
+  daily_max_realized_loss_usd: 20.0  # 2026-07-09 Floor Hunter overhaul (owner's call): ABSOLUTE
+                                   # realized-loss kill-switch - HALTED_DAY (new buys blocked) at
+                                   # -$20 realized; existing lots stay Guardian-managed; auto-clears
+                                   # next session. 0 disables. Sits UNDER the 6% MTM guard.
+
+# ---- Loss-streak protection (anti-revenge / anti-martingale) --------------
+loss_streak:
+  reduce_after_consecutive_losses: 4   # -> size multiplier 0.5 (2026-07-02: scaled to the higher trade count)
+  reduce_size_multiplier: 0.5
+  disable_after_consecutive_losses: 8  # -> DISABLED_REVIEW (human review). 2026-07-02: was 5 -- at ~6 trades/day
+                                       # the 6% daily halt must govern a bad DAY; DISABLED_REVIEW (human-only)
+                                       # is reserved for a genuine multi-session anomaly.
+  cooldown_minutes: 60                 # block new entries after a stop-out
+  multiplier_resets_only_on_win: true
+
+# ---- Confidence gating (confidence can only LOWER exposure, never raise) ---
+confidence:
+  min_confidence_to_trade: 60        # was 70 -> 60 -> 57 -> BACK TO 60 (2026-07-03). The 57 loosening was
+                                     # justified on PERFECT-FILL ledger R-multiples (06-23: [57,60) band
+                                     # meanR +0.750). Re-walked 2026-07-03 under the price-tiered retail
+                                     # cost curve (Schwarz et al.; scripts/slippage_floor_revalidation.py):
+                                     # the [57,60) band's edge DIES at every non-zero cost point (meanR
+                                     # -0.011, sumR -0.07 at price_tiered) and floor-57 winsorized exp
+                                     # (+0.275) sits BELOW floor-60 (+0.349) - criterion 3 fails across
+                                     # the grid. Costs are real; the marginal band is not. Research rule
+                                     # (frequency math): a trade whose net-of-cost edge is ~0 only adds
+                                     # variance + cost drag. The hard risk>=60 veto is UNCHANGED.
+  tiers:
+    # First tier min MUST track min_confidence_to_trade: confidence_multiplier() returns 0.0 below the
+    # lowest tier, so a floor-clearing trade would size to zero. Kept in sync at 60 (2026-07-03).
+    - { min: 60, max: 74, size_multiplier: 0.75 }  # 2026-07-02: was 0.5 -- nearly ALL live approvals land here
+                                                   # (7/2: eight approvals averaged conf ~62) and the 06-23 ledger
+                                                   # showed [57,60) OUTPERFORMED [60,65); half-sizing the whole
+                                                   # band contradicted that evidence. 0.75 keeps some humility.
+    - { min: 75, max: 89, size_multiplier: 1.0 }   # normal (still capped)
+    - { min: 90, max: 100, size_multiplier: 1.0 }  # 90+ grants NOTHING beyond the tier cap
+  confidence_is_metadata_only: true
+  never_carry_forward: true            # recompute every cycle; never inherit prior confidence
+
+# ---- Market-condition blackouts (block ALL new entries) -------------------
+market_blackouts:
+  market_open_blackout_min: 10         # no new trades first 10 min after open
+  market_close_blackout_min: 10        # no new entries once the Guardian EOD window is open (= its 10 min).
+  # Aligned with guardian.eod_flat_minutes_before_close so a lot can never be seconds old when the
+  # losers-only flatten evaluates it (a 15:52 fill dipping -0.11% at 15:53 would re-create the FRT
+  # instant-flush for losers). Entries stop at 15:50 ET; riders/losers are decided on lots with real age.
+  # 2026-07-01 redesign: the prior 30-min lockout treated the SYMPTOM of the FRT -$0.01 flush and amputated
+  # the 13:00-16:00 window where ~all live consensus passes have occurred. The real fix is
+  # guardian.eod_flat_mode: losers_only (robinhood.local.yaml): a late entry that ends the day flat/up now
+  # RIDES overnight instead of being beheaded at 15:50, so late entries are no longer pointless. This value
+  # only guards the physical margin to fill + hand protection to the Guardian before the bell; it is also
+  # pre-checked BEFORE the LLM cascade so blocked candidates don't burn model calls.
+  earnings_blackout_days: 2            # +/- N days around a position's earnings
+  block_during_macro_releases: true    # CPI / FOMC / NFP windows from macro calendar
+  volatility_spike_block: true         # e.g. VIX over threshold or symbol ATR z-score over threshold
+  vix_block_level: 35
+  symbol_atr_zscore_block: 3.0
+  block_on_market_instability: true    # LULD / MWCB halt states, breadth collapse
+  block_on_low_liquidity: true         # fails universe liquidity filter, or pre/post-market
+
+# ---- Portfolio regime gate (skip NEW long entries in a risk-off market regime) ------
+# Coarse PORTFOLIO overlay, evaluated each cycle from SPY daily closes (free; no VIX feed). Gates
+# NEW entries ONLY - existing positions keep their stops/trailing exits. Enforced by atlas/risk/
+# regime.py UPSTREAM of discovery (orchestrator step 5). Purpose = DRAWDOWN/SURVIVAL control, NOT
+# alpha: the RETURN benefit of market timing is largely a data-snooping artifact (Zakamulin 2014),
+# and market-factor vol-timing FAILS out-of-sample (Cederburg-O'Doherty-Wang-Yan, JFE 2020). Every
+# value is from the deep-research pass (memory regime-gate-2026-06-24); none is fit in-sample.
+regime:
+  enabled: false           # DEFAULT OFF until the walk-forward (2018Q4/2020/2022) validates it. When
+                           # true, a risk-off regime skips new entries (auto-clears when it flips back).
+  mode: trend_only         # trend_only (robust, OOS-surviving core - Faber) | trend_and_vol (vol is a
+                           # WEAK refinement for a long-only book; enable ONLY if the walk-forward earns it).
+  ma_length: 200           # Faber (2007, SSRN 962461): the 200-day SMA, THE established equity trend filter.
+  buffer_pct: 1.0          # Siegel's 1% band -> hysteresis half-width. Daily-cadence whipsaw control (we
+                           # can't inherit Faber's monthly cadence): risk-off below SMA*(1-1%), risk-on
+                           # above SMA*(1+1%), hold the prior state inside the band.
+  # --- volatility refinement (used ONLY when mode: trend_and_vol) ---
+  vol_window: 126          # Daniel-Moskowitz (JFE 2016) realized-variance window (~6mo of daily returns).
+  vol_norm_window: 252     # trailing window for the SELF-NORMALIZING percentile (~1yr). No absolute VIX
+                           # constant (20/25/30) is supported by the literature as a robust threshold.
+  vol_percentile: 80.0     # "elevated" = current 126d realized vol >= this trailing percentile. The ONE
+                           # knob to set by WALK-FORWARD (never in-sample-fit), not by hand.
+
+# ---- Data / connectivity safety -------------------------------------------
+safety:
+  max_data_age_seconds: 60             # stale data on a symbol => treat as missing => no trade
+  price_collar_pct: 5.0                # reject orders priced >X% from live NBBO/last
+  heartbeat_timeout_seconds: 30        # dead-man's switch: no entries, keep broker-resident stops
+  reject_if_number_mismatch: true      # LLM-cited number != feed (beyond tolerance) -> reject
+  number_mismatch_tolerance_pct: 0.1
+  entry_ttl_cycles: 3                  # cancel a marketable-limit entry still unfilled after N cycles
+                                       # (stale signal - don't chase); a zero-fill cancel frees the slot
+
+# ---- Options live gate (the granularity wall) -----------------------------
+options:
+  options_live_min_equity: 2000        # below this: options are PAPER-ONLY (Alpaca), blocked from live
+  require_broker_options_capability: true
+  max_options_level: 3                 # defined-risk multi-leg only
+  atomic_multileg_only: true           # spreads submitted as ONE order, never sequential legs
+  min_open_interest: 100
+  min_contract_volume: 50
+  max_bid_ask_spread_pct: 10

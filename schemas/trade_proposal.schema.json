@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.local/schemas/trade_proposal.schema.json",
+  "title": "TradeProposal",
+  "description": "The merged proposal, assembled deterministically by the orchestrator from an analyst_view (GLM-4.7-Flash) plus an auditor_view (Qwen3.6-27B). Neither model emits this object directly, and neither outputs size, prices, or quantities; those belong to the deterministic Risk Engine. A merged proposal that fails this schema, references a ticker not in the universe, cites a number that disagrees with the live feed, or whose signal cannot be re-derived deterministically is REJECTED and journaled.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "symbol", "setup_type", "bull_case", "bear_case", "uncertainty", "risk_flags", "scores", "recommendation"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "0.1" },
+    "symbol": {
+      "type": "string",
+      "description": "Must match a symbol in the resolved universe (universe.yaml). Hallucinated tickers are rejected.",
+      "pattern": "^[A-Z.]{1,6}$"
+    },
+    "setup_type": {
+      "type": "string",
+      "description": "Must be one of the closed taxonomy in signal_params.yaml: setup_types.",
+      "enum": ["breakout_with_volume", "pullback_to_vwap_uptrend", "pullback_in_uptrend", "range_reversion", "momentum_continuation", "relative_strength_leader"]
+    },
+    "bull_case": { "type": "string", "minLength": 20, "maxLength": 1200, "description": "Strongest honest argument FOR, grounded in the given signals." },
+    "bear_case": { "type": "string", "minLength": 20, "maxLength": 1200, "description": "Strongest honest argument AGAINST, written as if you wanted it rejected. A weak bear case is a failure." },
+    "uncertainty": { "type": "string", "minLength": 20, "maxLength": 1200, "description": "What would make this wrong? Assumptions, missing/stale data, invalidation conditions." },
+    "risk_flags": {
+      "type": "array",
+      "description": "Every risk from the controlled vocabulary that genuinely applies.",
+      "items": {
+        "type": "string",
+        "enum": ["earnings_risk", "low_liquidity", "unusual_volatility", "weak_signal", "contradictory_indicators", "market_weakness", "sector_weakness", "overexposure", "concentration", "news_risk", "gap_risk", "over_confidence", "repeated_failed_pattern", "prompt_injection_suspected"]
+      },
+      "uniqueItems": true
+    },
+    "scores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["technical", "market", "news", "risk_score"],
+      "properties": {
+        "technical": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "market": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "news": { "type": "integer", "minimum": 0, "maximum": 100, "description": "News/sentiment support, 0-100." },
+        "risk_score": { "type": "integer", "minimum": 0, "maximum": 100, "description": "HIGHER = MORE DANGEROUS. Feeds the deterministic veto. Be calibrated, not generous." }
+      }
+    },
+    "recommendation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action"],
+      "properties": {
+        "action": { "type": "string", "enum": ["enter", "pass"], "description": "A RECOMMENDATION to the Risk Engine, which may still reject it." },
+        "direction": { "type": "string", "enum": ["long", "short"], "description": "Required only when action == enter. (short reserved; long-only in early phases.)" }
+      }
+    },
+    "cited_numbers": {
+      "type": "array",
+      "description": "Optional: any indicator values the model referenced, echoed back for the orchestrator to re-check against the Signal Engine. A mismatch beyond tolerance rejects the proposal.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "value"],
+        "properties": {
+          "name": { "type": "string" },
+          "value": { "type": "number" }
+        }
+      }
+    }
+  }
+}

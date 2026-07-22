@@ -1,0 +1,105 @@
+# Strategy-lab roster STATE (mission 20260719-strategy-lab; lab-strategy-runtime-v1).
+# Constants live in code (provenance-tested); this file holds ONLY the state machine.
+# States: armed | parked | auto_disabled | pruned. Cohort-pin drift = registry violation.
+
+strategies:
+  atm_calendar_low_iv:
+    state: armed
+    cohort_pin: 1de78617cb11
+    note: >-
+      armed 2026-07-20 under lab-strat-atm_calendar_low_iv-v1
+  backspread_1x2:
+    state: armed
+    cohort_pin: 6af061369e52
+    note: >-
+      armed 2026-07-20 under lab-strat-backspread_1x2-v1
+  cndr_iron_condor_hold:
+    state: armed
+    cohort_pin: 5d875b3d68ca
+    note: >-
+      armed 2026-07-20 under lab-strat-cndr_iron_condor_hold-v1
+  donchian_breakout_debit_vert:
+    state: armed
+    cohort_pin: e5aea5b1755f
+    note: >-
+      armed 2026-07-20 under lab-strat-donchian_breakout_debit_vert-v1
+  earnings_iv_crush_strangle:
+    state: armed
+    cohort_pin: 2ceccbe77b9a
+    note: >-
+      armed 2026-07-20 under lab-strat-earnings_iv_crush_strangle-v1
+  gap_fade_bull_put:
+    state: armed
+    cohort_pin: 6b74c8c782a2
+    note: >-
+      armed 2026-07-20 under lab-strat-gap_fade_bull_put-v1
+  ic_45d16d_managed:
+    state: armed
+    cohort_pin: db702ea5e2cb
+    note: >-
+      armed 2026-07-20 under lab-strat-ic_45d16d_managed-v1
+  jade_lizard:
+    state: armed
+    cohort_pin: 56ae65fffc0f
+    note: >-
+      armed 2026-07-20 under lab-strat-jade_lizard-v1
+  overnight_1dte_strangle:
+    state: armed
+    cohort_pin: 328513050c5e
+    note: >-
+      armed 2026-07-20 under lab-strat-overnight_1dte_strangle-v1
+  pre_earnings_long_straddle:
+    state: armed
+    cohort_pin: a954bb17248b
+    note: >-
+      armed 2026-07-20 under lab-strat-pre_earnings_long_straddle-v1
+  pre_fomc_drift_call:
+    state: armed
+    cohort_pin: b4db53695047
+    note: >-
+      armed 2026-07-20 under lab-strat-pre_fomc_drift_call-v1
+  rsi2_overbought_bear_call:
+    state: armed
+    cohort_pin: 53555db737c2
+    note: >-
+      armed 2026-07-20 under lab-strat-rsi2_overbought_bear_call-v1
+  rsi2_oversold_short_put:
+    state: armed
+    cohort_pin: b1c09d26244b
+    note: >-
+      armed 2026-07-20 under lab-strat-rsi2_oversold_short_put-v1
+  short_put_45d30d_managed:
+    state: armed
+    cohort_pin: bbd4508f022c
+    note: >-
+      armed 2026-07-20 under lab-strat-short_put_45d30d_managed-v1
+  squeeze_long_straddle:
+    state: armed
+    cohort_pin: fce588186bd0
+    note: >-
+      armed 2026-07-20 under lab-strat-squeeze_long_straddle-v1
+  strangle_45d16d_managed:
+    state: armed
+    cohort_pin: 757ffab1f822
+    note: >-
+      armed 2026-07-20 under lab-strat-strangle_45d16d_managed-v1
+  tsmom_long_options:
+    state: armed
+    cohort_pin: 57dc9cce7e90
+    note: >-
+      armed 2026-07-20 under lab-strat-tsmom_long_options-v1
+  vrp_short_straddle:
+    state: armed
+    cohort_pin: 134066b002fc
+    note: >-
+      armed 2026-07-20 under lab-strat-vrp_short_straddle-v1
+  wput_weekly_putwrite:
+    state: armed
+    cohort_pin: fd9f3807bd55
+    note: >-
+      armed 2026-07-20 under lab-strat-wput_weekly_putwrite-v1
+  zero_dte_morning_ic:
+    state: armed
+    cohort_pin: 1911e123a405
+    note: >-
+      armed 2026-07-20 under lab-strat-zero_dte_morning_ic-v1

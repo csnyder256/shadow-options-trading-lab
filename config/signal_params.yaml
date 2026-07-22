@@ -1,0 +1,252 @@
+# signal_params.yaml - DETERMINISTIC SIGNAL ENGINE PARAMETERS + MEMORY RETRIEVAL
+# Read by the Signal Engine (code) and the Memory/Retrieval layer (code).
+# These parameters are SELECTED under purged cross-validation (skfolio), NOT hand-tuned
+# on the full history. Keep the number of free parameters small. Doc: docs/04_signal_engine.md
+version: 0.1
+
+indicators:
+  rsi_period: 14
+  adx_period: 14
+  atr_period: 14
+  ema_fast: 9
+  ema_slow: 21
+  sma_trend: 200
+  bollinger_period: 20
+  bollinger_std: 2.0
+  vol_zscore_window: 20
+  rel_strength_window: 20
+  benchmark_symbol: SPY
+
+derived_thresholds:
+  adx_trend_min: 20                 # below this = chop, filter out trend setups
+  rsi_oversold: 35
+  rsi_overbought: 65
+  vol_anomaly_zscore: 2.0           # volume z-score that counts as an anomaly
+  gap_pct_min: 1.0                  # |open-prevclose|/prevclose to count as a gap
+
+# Closed, enumerable taxonomy. The Decision Journal keys reflections by setup_type so the
+# system can detect "this KIND of setup keeps losing". Do NOT use free-text setup labels.
+setup_types:
+  - breakout_with_volume
+  - pullback_in_uptrend
+  - range_reversion
+  - momentum_continuation
+  - relative_strength_leader
+  # Buy-low / sell-high rebuild (2026-07-07, M5) - the instrument-agnostic price-action core archetypes.
+  # supported_dip = oversold-at-proven-support mean-reversion (fixed target, M6); early_wave = first
+  # pullback in a strong trend (trailing, M6). Emitted by SignalEngine.detect() when OHLCV arrays are given.
+  - supported_dip
+  - early_wave
+
+# Deterministic pre-LLM quality score. Candidates below min_quality_score are discarded
+# WITHOUT spending LLM tokens (deterministic-gate-first pattern).
+quality_score:
+  min_quality_score: 55
+  weights:                          # contributions to a 0-100 composite
+    trend_alignment: 0.30           # ADX over threshold + EMA/SMA structure
+    location: 0.25                  # distance to VWAP / support-resistance
+    confirmation: 0.20              # volume z-score
+    reward_risk: 0.25               # proposed target:stop ratio
+
+# Whole-share affordability band (Path 1, 2026-06-23). The candidate picker drops names whose share
+# price is outside [min, max] BEFORE the LLM cascade, so no analyst/auditor time is spent on a name a
+# whole-share ~$250 book can't hold. This is a LATENCY optimization - the deterministic Risk Engine is
+# the hard backstop (granularity_wall rejects any name where 1 whole share exceeds the risk/concentration/
+# settled-cash budget once fractional=False), so a stale value here is never a correctness bug: too high =
+# a few extra names reach the models and get rejected; too low = some affordable names go unanalyzed.
+# Raise max_entry_price MANUALLY as equity grows. ~$100 suits ~$292 (1 whole share fits: 35% single-stock
+# => ~$102, and 2.5% risk @ an 8% stop => ~$91; the risk-engine granularity_wall is the hard backstop).
+# Edge RE-VALIDATED at <=$100 on the 49,756-trade ledger (scripts/price_ceiling_test.py 2026-06-23:
+# n=36,029, win 41.0%, winsor expR +0.108, CI95lo +0.096 = significant; the $80-100 band is weaker at
+# +0.072 but still net-positive). The floor screens penny/lottery names (MAX-effect underperformers).
+price_band:
+  min_entry_price: 5.0
+  max_entry_price: 100.0
+
+# Queue organizer (Phase 1) - a persistent best-first candidate pool between the picker and the model
+# cascade (atlas/signals/queue_organizer.py). It dedups via cooldown (so the scarce auditor isn't re-spent
+# on names it just evaluated), selects best-first with freshness decay, and suppresses held names - so
+# capacity goes to the freshest, best, not-recently-seen candidates. Sizing: select_n ~ what the cascade
+# clears per cycle; pool_cap ~ universe*pass-rate (tune with scripts/simulate_throughput.py). cooldown +
+# data_ttl are wall-clock SECONDS (restart-safe); tau/dwell/escape are in CYCLES.
+queue_organizer:
+  select_n: 5
+  pool_cap: 256
+  tau_fresh_cycles: 3.0
+  quality_quantum: 1.0
+  dwell_cap_cycles: 10
+  starve_escape_cycles: 20
+  min_bucket_factor: 0.6
+  data_ttl_seconds: 900
+  fp_bucket: 3.0
+  cooldown_seconds_base: 1800
+  cooldown_seconds_min: 300
+
+# Price/time-conditional re-evaluation queue (atlas/revisit.py). On a thin/risk-off day the organizer's
+# adaptive cooldown collapses to its floor and blindly RECYCLES the same 2-3 names through the scarce
+# analyst with unchanged daily-bar inputs (CIFR reached the analyst 7x on 2026-06-26, all analyst_pass).
+# This queue REPLACES that churn: the analyst, on a PASS, may emit a `revisit` price condition; and a name
+# the analyst wanted to ENTER but that was blocked SOLELY by the market-open blackout is queued for reopen.
+# A deterministic watcher re-injects the symbol into the FULL gated cascade exactly ONCE when its
+# price/time condition fires. Watches expire at session-end. DEFAULT-OFF: ships disabled for one validation
+# day (building the code is inert while disabled); flip `enabled: true` only AFTER that day.
+revisit:
+  enabled: true                     # ENABLED 2026-07-03 (high-frequency rework): converts analyst PASSes
+                                    # into price/time-conditional re-looks instead of blind thin-day
+                                    # recycling - capacity via selectivity. Built + flag-tested 2026-06-26;
+                                    # the survival rails (same gated cascade, once-per-condition, session
+                                    # expiry, 64-watch cap) bound it.
+  max_watches: 64                   # hard cap on concurrent watches (thin-day backstop)
+  price_watch: true                 # honor analyst PASS + price-revisit conditions
+  reopen_watch: true                # re-queue an ENTER blocked SOLELY by the open blackout
+  reinject_per_cycle_cap: 5         # at most N due watches re-injected into the cascade per cycle
+
+# RS-leader CORE SLEEVE (2026-07-03 high-frequency rework): every N cycles the orchestrator injects the
+# top 12-1 cross-sectional momentum names (pre-market rs_table; Jegadeesh-Titman / JKP momentum theme - 
+# the most replicated edge in the factor literature) into the SAME gated discovery + cascade as
+# relative_strength_leader (trailing exit; per-lot 21-session leash via guardian
+# time_stop_sessions_trailing). VALIDATED before arming (scripts/validate_rs_sleeve.py, 2026-07-03,
+# survivorship-aware S&P panel, price-tiered costs ON): TEST >=2019 n=295, win 55.3%, winsor exp
+# +0.231R (CI +0.127..+0.336), pf 1.9, ~13-day holds -> +0.116R after the mandatory 50% decay haircut.
+rs_sleeve:
+  enabled: true
+  min_rs_pct: 90                    # 12-1 percentile floor (top decile - the validated cut)
+  top_k: 8                          # at most N leaders injected per evaluation
+  every_cycles: 15                  # ~30 min at 120s cycles (the rs_table is static intraday)
+
+# CATALYST PIPELINE (2026-07-03): external NON-PRICE event sources -> (a) untrusted-fenced context
+# both LLMs see, (b) bounded tape-confirmation watches that re-enter the FULL gate set. Events NEVER
+# touch quality/ranking (the "don't force $GME to the top" rule). Mode ladder: context_only (ships) ->
+# watch (after scripts/validate_govcon_catalyst.py + 5 clean shadow sessions) -> full (after >=2 weeks
+# of watch-mode outcomes). Borrow-fee events are capped at watch IN CODE (shorting-premium evidence).
+catalysts:
+  enabled: true
+  mode: context_only                # context_only | watch | full - promote per the ladder above
+  max_events_per_cycle: 10
+  max_active_events: 64
+  poll_every_cycles: 5              # ~10 min at 120s cycles
+  watch:
+    max_watches: 16
+    register_per_cycle_cap: 4
+    inject_per_cycle_cap: 2         # force-inject lane (mode: full only)
+    confirm_price_pct: 1.5          # price leg: last x 1.015, direction above
+    confirm_rvol_pace: 1.5          # volume leg: consolidated full-day pace (Tradier quote, batched)
+    setup_type: momentum_continuation
+    sources: []                     # PER-SOURCE allowlist (2026-07-04): even at mode watch/full,
+                                    # ONLY listed sources arm watches/evals. Empty = nothing arms.
+                                    # `edgar` (8-K 1.01) stays OUT permanently - trigger REFUTED at
+                                    # n=752 (2026-07-03) - unless a narrowed cohort validates.
+                                    # `insider` may be added by the USER only after
+                                    # scripts/validate_form4_catalyst.py PASSES + 5 clean shadow
+                                    # sessions. borrow + defensive sources are code-fenced besides.
+  edgar:                            # PRIMARY live channel: SEC EDGAR full-text search, real-time, free.
+    enabled: true                   # 2026-07-04 (M4) item EXPANSION: 1.01 material agreement, 2.01
+    items: ["1.01", "1.03", "2.01", "5.02", "3.01"]   # acquisition completed, 5.02 officer change - 
+    negative_items: ["1.03", "3.01"]  # context; 1.03 bankruptcy + 3.01 delisting are NEGATIVE ->
+    ttl_hours: 24                   # emitted as source edgar_neg (defensive: risk flag, never armed).
+                                    # The 1.01 WATCH trigger stays refuted (n=752) - context only.
+  edgar_13d:                        # Schedule 13D activist-stake context (2026-07-04, M4). Context
+    enabled: true                   # only; NOT watch-eligible until a cohort validates (none exists).
+    forms: ["SCHEDULE 13D"]         # post-modernization EFTS form type (root matches /A too);
+    ttl_hours: 48                   # the legacy "SC 13D" string returns ZERO hits (verified live).
+  defense_gov:                      # defense.gov/war.gov daily ~17:00 ET contracts digest. DISABLED
+    enabled: false                  # 2026-07-03: the RSS index works but article BODIES are Akamai-
+                                    # bot-walled (403 on every local HTTP stack). Fully implemented - 
+                                    # flip on if the wall drops, or drop the day's page into
+                                    # runtime/dod_contracts_<YYYY-MM-DD>.html (checked first).
+    min_amount_usd: 10000000
+  sam_gov:                          # SAM.gov award notices (civilian ~same-day; DoD 90d-stale there).
+    api_key: ""                     # DO NOT put the key here (tracked file). It belongs in gitignored
+                                    # config/credentials.local.yaml as `sam_gov: {api_key: "..."}`;
+    min_amount_usd: 10000000        # this field is a legacy fallback only. No key anywhere = feed off.
+  sentinel:                         # OPTIONAL tertiary enrichment from C:\path\to\seethefutures.
+    enabled: false                  # USER DIRECTIVE: never depend on it being up; ATLAS-native feeds
+    base_url: http://localhost:8000 # above are the real channels. 2s timeout + breaker if enabled.
+    kinds: [composite.govcon_acceleration, govcon.usaspending.large_award]
+    min_composite: 60
+  insider:                          # Form 4 insider open-market BUYS (2026-07-04) - the one new
+    enabled: true                   # ALPHA-bearing sector (Oenschlaeger-Moellenhoff FRL 2025:
+    min_value_usd: 20000            # decayed-but-positive reaction, concentrated in small caps).
+    cluster_window_days: 15         # CONTEXT_ONLY under the global mode; may join watch.sources
+    cluster_min_insiders: 3         # ONLY by user decision after the validator + shadow ladder.
+    ttl_hours: 48                   # Cluster (3+ insiders/15d) raises ingest magnitude only.
+  fda:                              # DEFENSIVE (2026-07-04): FDA binary-event blackout for overnight
+    enabled: true                   # riders (biotech CRL gaps -50..-80%). Free path only: clinicaltrials
+    blackout_days: 5                # v2 Phase-3 primary-completion dates + Federal Register AdComm
+    horizon_days: 21                # notices. HONEST COVERAGE: PDUFA dates are in NO free API - this is
+    clinicaltrials: true            # best-effort, not a guarantee (do NOT buy BPIQ). Fenced in code:
+    federal_register: true          # risk flag only (entry veto + force_eod_flat), never a watch/eval.
+  dilution:                         # DEFENSIVE (2026-07-04): live dilution/delisting-class filings via
+    enabled: true                   # EDGAR EFTS. Survival veto (dilution_risk) + force_eod_flat; thesis
+    forms: ["S-3", "424B5", "EFFECT", "25", "15"]   # unverified-as-alpha but defensive -> ships enabled.
+    ttl_hours: 72
+  gnw:                              # GlobeNewswire public-company PRs (2026-07-04, M5): PURE CONTEXT
+    enabled: true                   # (code-fenced - can never arm anything). PRs precede the 8-K by
+    categories: []                  # hours-days; ticker-tagged in-feed. Empty categories = built-in
+    ttl_hours: 24                   # whitelist (contracts/M&A/FDA/partnership/launch); law-firm spam
+                                    # blacklisted. GNW ONLY - PRNewswire ToS bans bots (do-NOT-build).
+  apewisdom:                        # WSB attention/crowding flag (2026-07-04, M5): PURE CONTEXT +
+    enabled: true                   # optional ride-caution. rank <= crowded_rank -> wsb_crowded flag
+    crowded_rank: 10                # (Barber 2022 herding ~-2.3%/20d after haircut). feeds_no_ride
+    feeds_no_ride: false            # true would join force_eod_flat (M2 hook) - DEFAULT OFF; the
+    ttl_hours: 2                    # long signal itself is DEAD post-GME (never a look-trigger).
+  borrow:                           # iborrowdesk (IBKR) borrow-fee spikes. OFF until the scrape proves
+    enabled: false                  # stable in shadow. PERMANENTLY capped at watch/context in code:
+    symbols: []                     # high-borrow-fee longs have NEGATIVE average returns (shorting-
+    requests_per_cycle: 5           # premium literature) - a fee spike may only pre-arm a re-look.
+    spike_fee_jump_pp: 10.0
+    min_fee_pct: 20.0
+    max_symbols: 20
+
+# FINRA SHORT CONTEXT (2026-07-04, M5): once-daily CNMS daily short-volume ingest -> per-candidate
+# short_vol_ratio + cross-sectional percentile FEATURES. Context only - the ratio's short-horizon
+# predictive value is REFUTED (Wang-Yan-Zheng JFE 2020). days_to_cover NOT included: FINRA's
+# biweekly short-interest download requires api.finra.org registration (no keyless channel).
+short_context:
+  enabled: true
+  finra_daily: true
+  lookback_days: 5                  # walk back to the last published file (weekends/holidays)
+
+# OPTIONS-FLOW features (2026-07-04, M5): self-computed from Tradier chains at candidate-selection
+# time - put/call volume ratio + call volume vs PRIOR-DAY open interest (OI updates overnight; the
+# live-volume-vs-prior-OI comparison IS the opening-activity heuristic, by design). FEATURES ONLY,
+# no gate/veto. <= max_candidates x 2 requests/cycle inside the Tradier 100/min budget.
+options_flow:
+  enabled: true
+  max_candidates: 5
+
+# SYMBOL-STATE defense layer (2026-07-04): trading halts (Nasdaq cross-exchange RSS) + SEC
+# trading-suspension denylist + SELF-COMPUTED SSR (intraday low <= 0.90 x prior close - the SSR
+# *file* is archival-proven to regenerate only ~4:15AM/~4:30PM ET, never intraday). Consumers:
+# scan-context veto (halted/suspended), pre-submit order guard (FAIL-OPEN: only affirmatively-fresh
+# state <= max_state_age_seconds can block a submit), LLM context (ssr_active is context ONLY - 
+# SSR restricts shorts; we only buy). DEFENSIVE - ships ENABLED (don't-re-gate directive).
+symbol_state:
+  enabled: true
+  poll_every_cycles: 1         # halt RSS asks <=1/min; our cycle is 120s
+  halt_rss: true
+  sec_suspensions: true        # SEC RSS requires the declared User-Agent (403 without it)
+  max_state_age_seconds: 180   # order-guard freshness bound (fail-open beyond)
+  ssr_self_compute: true       # intraday low <= 0.90 x prevclose, from the Tradier batch
+
+# Liquidity filter applied at candidate time (equities). Options filters are in risk_limits.yaml.
+liquidity_filter:
+  min_avg_dollar_vol_20d: 20000000  # $20M/day minimum
+  max_spread_bps: 50                # was 15 - retuned 2026-07-02 (day-1 validation evidence): the 15bps
+                                    # ceiling killed the ENTIRE morning crop (10 consensus-passing names
+                                    # at 18-115bps). At our $30-35 order size a 50bps spread costs ~15
+                                    # CENTS once, vs multi-percent targets - 15bps was calibrated as if
+                                    # we traded institutional size. 50 still blocks genuinely broken
+                                    # books (ROG 115bps). NOTE: today those 10 blocks all HELPED (weak
+                                    # morning tape, avg -3.5% after rejection) - one confounded day;
+                                    # re-check this number after ~2 weeks of fills.
+
+# Memory retrieval (docs/05 Layer 3): recency x relevance x importance, top-K injected.
+memory_retrieval:
+  memory_top_k: 5
+  weights: { recency: 0.34, relevance: 0.33, importance: 0.33 }
+  decay_Q_days:                     # Ebbinghaus decay constant per layer (larger = slower decay)
+    news: 14
+    intermediate: 90
+    reflections_and_fundamentals: 365
+  embedding_model: local            # use a local embedding model for relevance cosine sim

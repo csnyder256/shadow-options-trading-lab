@@ -1,0 +1,78 @@
+# FLOOR HUNTER configuration (2026-07-09 overhaul; plan: .claude/plans + mission ledger
+# 20260709-floor-hunter-overhaul.md). INERT until hunter.enabled is true AND the Hunter process is
+# wired (P3); fire_mode stays "journal" (shadow) until the P5 live gate. Thresholds marked SWEEP are
+# provisional - the P1 replay gate's pre-registered sweep decides them; treat the values here as the
+# defaults under test, not validated numbers.
+hunter:
+  enabled: false                  # master switch; false = platform is byte-identical to pre-overhaul
+  fire_mode: journal              # journal (shadow: fires -> runtime/hunter_shadow_fires.jsonl) | live
+
+  # --- discovery / in-play admission (server scans created 2026-07-09 via RH MCP) ---
+  scan_id: "00000000-0000-4000-8000-000000000012"        # ATLAS-H-inplay  (RVOL>=3, Last>=5, cap>=300M)
+  scan_id_morning: "00000000-0000-4000-8000-000000000013" # ATLAS-H-am-inplay (RVOL>=0.9 pace variant)
+  morning_until_et: "11:00"
+  pct_change_band_up: [2.0, 30.0]   # client-side %chg band for stalkable UP-in-play names
+  pct_change_band_down: [-30.0, -4.0]  # DOWN cohort: DATA-ONLY (shadow records; never fired live in v1)
+  price_min: 5.0                  # sub-$5 long ban (research C3)
+  price_max: 500.0
+  daily_atr_pct_min: 3.0          # volatility FLOOR - kills the REIT/bank profile structurally
+  dollar_vol_pace_min: 8000000    # cumulative day dollar-vol pace floor
+  rvol_pace_min_lane_a: 2.5       # catalyst-verified lane      (SWEEP 2.0-4.0)
+  rvol_pace_min_lane_b: 5.0       # volume-is-the-catalyst lane
+  score_min_lane_a: 55
+  score_min_lane_b: 65
+  max_concurrent_stalks: 12
+  max_armed_plans: 6
+  evict_score_margin: 10          # replace lowest incumbent only if new >= incumbent+10, never past PULLBACK
+
+  # --- floor map ---
+  zone_half_width_atr5m: 0.30     # zone half-width = max(this x ATR5m, zone_half_width_frac x price)
+  zone_half_width_frac: 0.0015
+  zone_min_families: 2
+  zone_min_score: 3.0             # SWEEP 2.5-4.0
+  max_chase_atr5m: 0.35           # entry ceiling = zone.top + this x ATR5m (SWEEP 0.25-0.5)
+  retrace_depth_band: [0.40, 0.60]  # stalk activates only inside 40-60% retrace of the catalyst leg
+
+  # --- confirmation trigger (two grammars, A/B'd at the replay gate) ---
+  trigger_grammars: [undercut_reclaim, higher_low_pivot_break]
+  flush_depth_atr5m: [0.2, 0.8]   # undercut_reclaim: flush depth band below reference low
+  reclaim_max_bars: 5             # 1-min close back above reference within N bars
+  reclaim_body_min: 0.5
+  reclaim_vol_median_mult: 1.5    # trigger-bar volume >= 1.5x its 20-bar median
+  dip_vol_contraction: true       # Wyckoff dry-up required on the pullback leg
+  vol_z_min: 0.5                  # SWEEP 0.0-1.0
+  entry_start_et: "09:45"
+  last_entry_et: "13:00"          # SWEEP vs 11:00; midday 11:30-13:30 carries a score penalty
+  min_reward_risk: 2.0
+  min_target_spread_mult: 6.0     # target distance must be >= 6x quoted spread (research 6-8x)
+
+  # --- exits (same-day by construction) ---
+  stop_buffer_atr5m: 0.35         # stop = structure low - this x ATR5m (SWEEP 0.25-0.5)
+  stop_width_pct_min: 0.5         # reject plans whose stop is inside spread noise
+  stop_width_pct_max: 6.0         # a 6%-wide "floor" is a hope, not a floor
+  tp1_fraction: 0.60              # scale-out at T1; exit style A/B at the gate: single-2R vs 60/40 vs 50/50
+  tp1_r_multiple: 1.2             # T1 = max(session VWAP, entry + 1.2 x stop_dist) (SWEEP 1.0-1.5)
+  breakeven_after_tp1: true
+  vwap_loss_hard_exit: true       # 1-min close below day VWAP after entry = full exit
+  time_stop_minutes: 90           # SWEEP 45-120; stall exit if < +0.5R
+  eod_flat_et: "15:45"            # sleeve flattens itself; Guardian force_eod_flat 15:50 = backstop
+  losers_always_flat: true        # no exceptions in this sleeve; winners-ride variant is shadow-A/B only
+
+  # --- risk rails ---
+  per_trade_risk_usd: 5.0         # start value; scale to 7 after 25 live trades
+  notional_min: 20.0
+  notional_max: 95.0
+  max_positions: 2                # cash regime; 3 after the margin flip
+  max_fires_per_day: 2            # start value; toward 6 after the margin flip
+  daily_max_realized_loss_usd: 20.0   # the owner's kill-switch; min() with the 6% mark-to-market backstop
+  cooldown_after_loss_min: 30
+  no_reentry_after_loss_same_symbol: true
+  no_averaging_down: true
+  event_crash_ban_pct: 10.0       # never stalk a name down >= this on the event (dead-cat evidence)
+  max_gap_unless_ep_pct: 50.0     # >50% gappers avoided unless EP-class (flat multi-month base)
+  veto_ssr: true
+
+  # --- data budget (three processes share Tradier's 120/min; each self-caps) ---
+  quote_seconds: 5                # one batched POST covers ALL stalked names per tick
+  timesales_backfill_per_admission: 1
+  tradier_self_cap_per_min: 30

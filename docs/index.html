@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shadow-options-trading-lab</title>
+<meta name="description" content="Live-data options strategies that trade on paper only, graded on the worst fill they could have gotten.">
+<style>
+  :root {
+    --bg: #f7f6f3;
+    --panel: #ffffff;
+    --ink: #16181d;
+    --ink-soft: #52565f;
+    --ink-faint: #868b95;
+    --rule: #e2e0da;
+    --accent: #b4401f;
+    --accent-soft: #f3e2db;
+    --mono-bg: #f1efe9;
+    --warn: #8a6d1f;
+    --warn-bg: #faf3dc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101114;
+      --panel: #17191d;
+      --ink: #eceef1;
+      --ink-soft: #a4a9b2;
+      --ink-faint: #71767f;
+      --rule: #2a2d33;
+      --accent: #ff7a4d;
+      --accent-soft: #2c1c16;
+      --mono-bg: #1d2025;
+      --warn: #d7bb69;
+      --warn-bg: #241f12;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 17px;
+    line-height: 1.65;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { width: 100%; max-width: 62rem; margin: 0 auto; padding: 0 1.4rem; }
+  a { color: var(--accent); text-decoration: none; border-bottom: 1px solid transparent; }
+  a:hover { border-bottom-color: var(--accent); }
+  code, pre { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+  code { background: var(--mono-bg); padding: 0.1em 0.36em; border-radius: 3px; font-size: 0.87em; }
+  pre {
+    background: var(--mono-bg);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 1rem 1.1rem;
+    overflow-x: auto;
+    font-size: 0.83rem;
+    line-height: 1.6;
+    margin: 0;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+
+  /* ---------- masthead ---------- */
+  header.top { border-bottom: 1px solid var(--rule); padding: 4.5rem 0 3.2rem; }
+  .eyebrow {
+    font-size: 0.7rem; letter-spacing: 0.19em; text-transform: uppercase;
+    color: var(--accent); font-weight: 700; margin: 0 0 1.1rem;
+  }
+  h1 {
+    font-size: clamp(2rem, 6.4vw, 3.5rem);
+    line-height: 1.03; letter-spacing: -0.032em;
+    margin: 0 0 1.1rem; font-weight: 700;
+    overflow-wrap: break-word;
+  }
+  .tagline {
+    font-size: clamp(1.05rem, 2.5vw, 1.4rem);
+    line-height: 1.42; color: var(--ink-soft);
+    max-width: 40ch; margin: 0 0 2rem; font-weight: 400;
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0 0 2.2rem; }
+  .chip {
+    font-size: 0.72rem; letter-spacing: 0.05em; text-transform: uppercase;
+    font-weight: 650; padding: 0.34rem 0.7rem; border-radius: 100px;
+    border: 1px solid var(--rule); color: var(--ink-soft); background: var(--panel);
+  }
+  .chip.hot { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+  .cta { display: flex; flex-wrap: wrap; gap: 0.7rem; align-items: center; }
+  .btn {
+    display: inline-block; padding: 0.72rem 1.35rem; border-radius: 7px;
+    font-weight: 650; font-size: 0.95rem; border: 1px solid var(--accent);
+  }
+  .btn.solid { background: var(--accent); color: #fff; }
+  .btn.solid:hover { border-bottom-color: var(--accent); opacity: 0.9; }
+  .btn.ghost { color: var(--accent); border-color: var(--rule); }
+  .btn.ghost:hover { border-color: var(--accent); }
+
+  /* ---------- notice ---------- */
+  .notice {
+    margin: 2.6rem 0 0; padding: 1rem 1.2rem;
+    background: var(--warn-bg); border-left: 3px solid var(--warn);
+    border-radius: 0 6px 6px 0; color: var(--ink-soft); font-size: 0.94rem;
+  }
+  .notice strong { color: var(--ink); }
+
+  /* ---------- sections ---------- */
+  section { padding: 3.6rem 0; border-bottom: 1px solid var(--rule); }
+  section:last-of-type { border-bottom: 0; }
+  h2 {
+    font-size: clamp(1.35rem, 3.2vw, 1.85rem); letter-spacing: -0.02em;
+    margin: 0 0 0.5rem; font-weight: 680; line-height: 1.2;
+  }
+  .kicker {
+    font-size: 0.7rem; letter-spacing: 0.19em; text-transform: uppercase;
+    color: var(--ink-faint); font-weight: 700; margin: 0 0 0.8rem;
+  }
+  p { margin: 0 0 1.05rem; max-width: 68ch; }
+  .lede { font-size: 1.08rem; color: var(--ink-soft); }
+
+  .grid { display: grid; gap: 1.1rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); margin-top: 1.8rem; }
+  .card {
+    background: var(--panel); border: 1px solid var(--rule);
+    border-radius: 10px; padding: 1.3rem 1.35rem;
+  }
+  .card h3 { margin: 0 0 0.5rem; font-size: 1rem; letter-spacing: -0.01em; font-weight: 680; }
+  .card p { font-size: 0.92rem; color: var(--ink-soft); margin: 0; max-width: none; }
+  .card .num {
+    display: block; font-size: 1.9rem; font-weight: 700; letter-spacing: -0.03em;
+    color: var(--accent); line-height: 1; margin-bottom: 0.45rem;
+  }
+
+  .tablewrap { overflow-x: auto; margin: 1.5rem 0; border: 1px solid var(--rule); border-radius: 10px; background: var(--panel); }
+  table { border-collapse: collapse; width: 100%; min-width: 26rem; font-size: 0.92rem; }
+  th, td { text-align: left; padding: 0.7rem 1rem; border-bottom: 1px solid var(--rule); }
+  th { font-size: 0.7rem; letter-spacing: 0.13em; text-transform: uppercase; color: var(--ink-faint); font-weight: 700; }
+  tr:last-child td { border-bottom: 0; }
+  td code { white-space: nowrap; }
+
+  ul.plain { list-style: none; padding: 0; margin: 1.2rem 0 0; }
+  ul.plain li { padding: 0.6rem 0 0.6rem 1.2rem; position: relative; color: var(--ink-soft); max-width: 68ch; font-size: 0.96rem; }
+  ul.plain li::before { content: ""; position: absolute; left: 0; top: 1.28rem; width: 7px; height: 1px; background: var(--accent); }
+  ul.plain li strong { color: var(--ink); font-weight: 650; }
+
+  .docs { display: grid; gap: 0.7rem; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); margin-top: 1.5rem; }
+  .doclink {
+    display: block; background: var(--panel); border: 1px solid var(--rule);
+    border-radius: 8px; padding: 0.9rem 1.05rem; border-bottom: 1px solid var(--rule);
+  }
+  .doclink:hover { border-color: var(--accent); }
+  .doclink b { display: block; font-size: 0.94rem; color: var(--ink); font-weight: 650; }
+  .doclink span { display: block; font-size: 0.83rem; color: var(--ink-faint); margin-top: 0.15rem; }
+
+  footer { padding: 3rem 0 4rem; color: var(--ink-faint); font-size: 0.88rem; }
+  footer p { max-width: none; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <p class="eyebrow">Options research platform</p>
+    <h1>shadow-options-trading-lab</h1>
+    <p class="tagline">Live-data options strategies that trade on paper only, graded on the worst fill they could have gotten.</p>
+    <div class="chips">
+      <span class="chip hot">Shadow mode, no orders</span>
+      <span class="chip">20 strategies armed</span>
+      <span class="chip">Python 3.14</span>
+      <span class="chip">731 tests passing</span>
+      <span class="chip">Work in progress</span>
+    </div>
+    <div class="cta">
+      <a class="btn solid" href="https://github.com/csnyder256/shadow-options-trading-lab">View on GitHub</a>
+      <a class="btn ghost" href="https://github.com/csnyder256/option-contract-grader">Companion: option-contract-grader</a>
+    </div>
+    <div class="notice">
+      <strong>Read this first.</strong> This is a snapshot in time of a system that is currently running. It is a work in progress, running roughly 20 strategies in unison in shadow mode, for fine-tuning. It places no broker orders and it is not trying to look finished.
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">What it does</p>
+    <h2>An apparatus for grading strategies honestly</h2>
+    <p class="lede">On live 1-minute market data the system decides what options position it <em>would</em> open, tracks that hypothetical position mark by mark, decides when it <em>would</em> close, and writes every step to append-only ledgers.</p>
+    <p>The point is not a trading bot. The point is measurement that refuses to flatter itself. The apparatus exists. The verdict does not: no strategy has reached the sample size needed to clear the evidence bar, so every verdict currently reads <code>UNPROVEN</code>. That is the honest state of the work.</p>
+
+    <div class="grid">
+      <div class="card"><span class="num">20</span><h3>Strategies armed</h3><p>Published independently, each scanning on its own interval against a shared quote hub.</p></div>
+      <div class="card"><span class="num">3</span><h3>Fill ledgers per trade</h3><p>Worst, base and optimistic recorded at once. Grading runs on worst only.</p></div>
+      <div class="card"><span class="num">0</span><h3>Orders, structurally</h3><p>No code path in the options import closure can submit one. A test proves it.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">The load-bearing property</p>
+    <h2>It cannot trade</h2>
+    <p>Shadow mode here is not a flag. The order-placement machinery from the project's earlier equity phase was deleted from the tree, not disabled. Going live would be a build, not a flip.</p>
+    <p>That claim is mechanically enforced. A test spawns a clean subprocess, imports the whole live decision path the way production imports it, and asserts that none of the archived order machinery came back.</p>
+<pre><code># tests/test_keep_imports.py::test_no_order_machinery_reachable_from_options
+banned = [b for b in ('atlas.execution.order_lifecycle',
+                      'atlas.execution.broker_adapter', 'atlas.execution.guardian',
+                      'atlas.execution.robinhood_adapter', 'atlas.orchestrator', 'atlas.app')
+          if b in sys.modules]
+assert not banned, f'order machinery reachable: {banned}'</code></pre>
+    <p style="margin-top:1.05rem">The subprocess is the load-bearing part. Inside a shared pytest process, <code>sys.modules</code> is polluted by whatever a sibling test imported first, so the same check would pass vacuously.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">How the grading works</p>
+    <h2>Three ledgers, and a test you cannot game by looking</h2>
+    <p>Every entry and every exit is recorded three times at once. Grading runs exclusively on the worst ledger. The other two bound the answer and falsify the recorder: on net P&amp;L the identity <code>worst &lt;= base &lt;= optimistic</code> must hold on every row, and rows that violate it are quarantined out of the statistics rather than averaged in.</p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Ledger</th><th>Assumption</th></tr></thead>
+        <tbody>
+          <tr><td><code>WORST</code></td><td>buy the ask, sell the bid</td></tr>
+          <tr><td><code>BASE</code></td><td>mid, moved 0.35 x half-spread against you</td></tr>
+          <tr><td><code>OPTIMISTIC</code></td><td>mid</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <ul class="plain">
+      <li><strong>Anytime-valid sequential testing.</strong> Each strategy carries a paired FOR/AGAINST e-process under <code>H0: E[R] &lt;= 0</code> and <code>H0': E[R] &gt;= 0</code>. Both are supermartingales under their nulls, so Ville's inequality lets you re-grade nightly and look whenever you want, with no multiple-looks penalty.</li>
+      <li><strong>Capital-at-risk denominators.</strong> Undefined-risk short structures get a per-family Reg-T margin proxy, frozen at entry and independently re-derived by the grader as a corruption check. Loss beyond the capital at risk is logged as <code>tail_excess</code>, never clipped away.</li>
+      <li><strong>Cohort hashing.</strong> A strategy's identity is <code>sha256[:12]</code> of <code>{strategy_id, version, params}</code>. Change a parameter and the cohort forks, and the e-process wealth restarts at 1.0. Tuning cannot inherit a track record.</li>
+      <li><strong>A prune bar that needs a reason.</strong> A strategy is only a definite loser when the statistics and the mechanism agree: <code>wealth_against &gt;= 20</code> at <code>n &gt;= 25</code>, the computed loss driver matches the mechanism declared at birth, and a registered sweep found no surviving grid cell.</li>
+      <li><strong>Provenance enforcement.</strong> A test fails if any tunable constant lacks a registry entry and a sweep-ledger row. One constant was demoted from a false DERIVED to CALIBRATION during an audit, and the demotion is on the record.</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">Architecture</p>
+    <h2>Two shadow engines, side by side</h2>
+    <p>The main options shadow runs five lane classes into a contract selector with roughly 17 hard gates and an expected-value stage. The strategy lab runs twenty published strategies against a shared quote hub under a rolling-minute budget governor. Both write into the same three-ledger shadow record, and both feed the nightly grader.</p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Lane class</th><th>Looks for</th><th>State</th></tr></thead>
+        <tbody>
+          <tr><td><code>IndexTrendLane</code></td><td>index trend break</td><td>live</td></tr>
+          <tr><td><code>Last30Lane</code></td><td>last-30-minute 1DTE continuation</td><td>live</td></tr>
+          <tr><td><code>InPlayORBLane</code></td><td>in-play opening-range break</td><td>live</td></tr>
+          <tr><td><code>MacroReactionLane</code></td><td>macro-print reaction</td><td>live</td></tr>
+          <tr><td><code>PreEarningsStubLane</code></td><td>event straddle</td><td>permanent stub</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>The exit ladder carries a standing prohibition: no rule may fire on a premium threshold. What you paid is not evidence about what the contract is worth. Where AI appears at all, it appears at the edges: free-tier cloud models propose a premarket watchlist, their replies pass a drop-never-repair allowlist, and nothing under <code>atlas/options/</code> references a model or a provider. The live decision path is pure math.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">Quickstart</p>
+    <h2>Runs on a fresh clone with zero credentials</h2>
+<pre><code>py -3 -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe -m pip install httpx pyarrow alpaca-py
+
+# Nothing here touches a broker or the network.
+.venv\Scripts\python.exe -m pytest -q
+# 736 tests: 731 pass, 5 skip (live-deployment canaries)</code></pre>
+    <p style="margin-top:1.05rem">Live-data loops need your own Tradier token in <code>config/tradier.local.yaml</code>. Tradier is the only feed the live loop actually needs. Alpaca, Finnhub and the cloud-model keys are optional, and every source fails open. <code>runtime/</code> is gitignored and created on first run, so a clone starts without it.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">Documentation in the repo</p>
+    <h2>Read the primary sources</h2>
+    <div class="docs">
+      <a class="doclink" href="https://github.com/csnyder256/shadow-options-trading-lab/blob/main/docs/OPTIONS_SYSTEM_NOW.md"><b>OPTIONS_SYSTEM_NOW.md</b><span>Current state, ending in its own known-gaps section</span></a>
+      <a class="doclink" href="https://github.com/csnyder256/shadow-options-trading-lab/blob/main/docs/OPTIONS_SYSTEM_FLOW.md"><b>OPTIONS_SYSTEM_FLOW.md</b><span>Quote to signal to selector to ledger, end to end</span></a>
+      <a class="doclink" href="https://github.com/csnyder256/shadow-options-trading-lab/blob/main/docs/PROMOTION_LADDER.md"><b>PROMOTION_LADDER.md</b><span>Six stages. LLM output always enters at stage 0</span></a>
+      <a class="doclink" href="https://github.com/csnyder256/shadow-options-trading-lab/blob/main/docs/strategies/briefs"><b>docs/strategies/briefs/</b><span>26 research briefs with cited literature locators</span></a>
+      <a class="doclink" href="https://github.com/csnyder256/shadow-options-trading-lab/blob/main/atlas/strategy_lab/grading.py"><b>atlas/strategy_lab/grading.py</b><span>If you read one file, read this one</span></a>
+      <a class="doclink" href="https://github.com/csnyder256/shadow-options-trading-lab/blob/main/README.md"><b>README.md</b><span>The full write-up, gaps included</span></a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p>MIT licensed. Built by Cade (<a href="https://github.com/csnyder256">github.com/csnyder256</a>).</p>
+    <p>Research software. Nothing here is investment advice, and nothing here places an order.</p>
+  </div>
+</footer>
+
+</body>
+</html>

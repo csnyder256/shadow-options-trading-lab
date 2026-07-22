@@ -1,0 +1,427 @@
+{
+ "guards_a": [
+  {
+   "name": "bsm_escrowed_dividend_adjustment",
+   "exact_behavior": "Any BSM scenario repricing (entry EV gate, EV(hold)<EV(sell) optimal stop, P(target) trail test) whose horizon crosses an underlying ex-dividend date -> price on S' = S - PV(declared dividend) (escrowed-dividend/forward method) instead of raw spot. Fixes a confirmed live gap: the vendored Merton-form BSM has a continuous-q input but callers hardcode q=0.0 (atlas/options/selector.py:75, scripts/snapshot_iv.py:61). Wire H2-2026 ex-dates: SPY 09-18 and 12-18 (~$1.90, SSGA-published); DIA 07-17, 08-21, 09-18, 10-16, 11-20, 12-18 (SSGA-published); IWM 09-15 and 12-15 (iShares-published, ~$0.68-0.85); QQQ 09-21 and 12-21 (pattern-projected ~$0.70-0.85, confirm at declaration). Always use the runtime declared amount, never a hardcoded band.",
+   "where": "exit engine + selector gates (EV engine / vendored BSM callers)",
+   "test_idea": "On 2026-09-16 a 2-DTE 0.7-delta SPY call priced with vs without the ~$1.90 dividend must differ by ~0.7 x PV(div) (~$1.32); the 2026-09-18 open scenario paths must show a mechanical down-jump of dividend/S (~0.25% at SPY~$750, computed from live S, not hardcoded)."
+  },
+  {
+   "name": "ex_div_force_flat_exit_rule",
+   "exact_behavior": "New exit rule slotted immediately after 'never hold through a macro print': long CALL AND next trading day is an ex-div date for the underlying AND extrinsic (mark mid - intrinsic) < declared dividend -> force-sell by 15:45 today; symmetrically, block new call entries after 15:00 the day before ex-div that would violate the same test. Puts unaffected. H2-2026 trigger sessions: Mon 09-14 (IWM), Thu 09-17 (SPY), Fri 09-18 (QQQ weekend hold, belt-and-suspenders vs the not-Friday rule), Mon 12-14 (IWM), Thu 12-17 (SPY), Fri 12-18 (QQQ); DIA = eve of every opex Friday if DIA is ever added (documented accepted risk until then). Key off explicit wired dates, never weekday heuristics (IWM's ex-div weekday wobbles year to year); a generic runtime next-day-ex-div check also covers the SPY/DIA 12-31 potential excise distribution.",
+   "where": "exit engine + session calendar (per-ticker ex-div table)",
+   "test_idea": "Unit: synthetic 0.8-delta IWM call with $0.30 extrinsic on 2026-09-14 emits force-sell by 15:45; same contract with $1.00 extrinsic does not; assert rule position in the first-match order directly after the macro-print rule."
+  },
+  {
+   "name": "ex_div_reference_anchor_adjustment",
+   "exact_behavior": "On the morning after an underlying's ex-div date -> dividend-adjust all carried-over price references (prior close for gap calc, prior-day range for range re-entry invalidation, prior VWAP, stop anchors, 14d noise-area / realized-range inputs) BEFORE evaluating the 09:35 regain re-decision, VWAP-recross, or gap/noise-band stats, so the mechanical ~0.25% ex-div gap-down is not read as thesis invalidation or a real gap.",
+   "where": "selector gates / lane signal math (index_trend, last30) + day-briefing",
+   "test_idea": "Replay 2026-06-18 SPY ex-div bars: adjusted gap_pct equals raw gap plus dividend/prior_close; assert no range re-entry invalidation fires on a pure dividend gap in a synthetic flat tape."
+  },
+  {
+   "name": "half_day_close_relative_clock",
+   "exact_behavior": "Session calendar authoritative for 2026-11-27 and 2026-12-24 (the ONLY 2026 early closes; 2026-07-03 was a full holiday): equity close 13:00 ET, SPY/QQQ/IWM/DIA options close 13:15 ET. Every exit-engine and lane anchor becomes an offset from equity close, not wall clock: 0DTE force-sell = close-60m (12:00) with delta>=0.80 extension to close-30m (12:30); no 0DTE entries after close-120m (11:00); last30 trigger close-30m (12:30); same-day flat close-15m (12:45); designed exits close-5m (12:55); index option management window close..close+10m (13:00-13:10). Simplest safe fallback if the remap cannot land tonight: disable last30 and macro_reaction entries on those two dates (their 15:30/15:55 anchors are undefined). atlas/options/session_calendar.py already carries HALF_DAYS_2026_FALLBACK (minute 780, options close = equity close+15) \u2014 the build is asserting every hardcoded 14:00/15:00/15:30/15:45/15:55/16:10 consumer routes through it. Note for any future index-option lane: expiring 0DTE PM-settled SPXW/XSP cease 13:00 on half days; non-expiring SPX/XSP trade to 13:15.",
+   "where": "session calendar + exit engine + lane clocks",
+   "test_idea": "Simulate 2026-11-27: exit engine emits 0DTE force-sell at 12:00 and same-day flat at 12:45, nothing marks after 13:15, and the 'never past 15:58' exit rail resolves to 12:58; grep the codebase for wall-clock '15:xx' constants not routed through the calendar."
+  },
+  {
+   "name": "expiration_calendar_not_weekday_math",
+   "exact_behavior": "Derive every expiration date from the exchange holiday calendar (third Friday unless exchange holiday -> preceding business day); DTE arithmetic, 0DTE labeling ('0DTE allowed before 14:00'), and the DTE>=2 overnight gate all consume the derived date. Hardcode H2-2026: monthly opex Jul 17, Aug 21, Sep 18, Oct 16, Nov 20, Dec 18; triple witching Sep 18 and Dec 18. The failure mode already occurred in 2026 (Jun 18 was a Thursday expiration due to Juneteenth). SPY/QQQ/IWM have Mon-Fri daily expirations so 0DTE lanes are live every session.",
+   "where": "session calendar / selector DTE arithmetic",
+   "test_idea": "Unit: expiration_for(June 2026) returns Thu 2026-06-18, not Fri 2026-06-19; all six H2 dates reproduce from the holiday-aware rule; DTE of a Jul-17 contract on Jul 16 equals 1."
+  },
+  {
+   "name": "ledger_tick_rounding",
+   "exact_behavior": "Round every BASE and OPTIMISTIC synthetic fill to the contract's minimum tick AWAY from the trader (buy: ceil to tick; sell: floor to tick). Tick function: SPY/QQQ/IWM = $0.01 at ALL premiums; Penny Interval Program member = $0.01 below $3.00, $0.05 at/above $3.00; all other classes = $0.05 below $3.00, $0.10 AT OR ABOVE $3.00; a premium crossing $3.00 intraday changes its tick. Penny-class membership is a maintained list: refresh first trading day of January (additions) and April (removals). WORST needs no change (NBBO already on-grid). Document the structural floor: a non-penny name with mid < $0.50 can never pass the 10%-of-mid spread gate at minimum tick $0.05 (mid < $0.25 if the gate tests half-spread) \u2014 intentional exclusion of cheap non-penny contracts, not a bug.",
+   "where": "runner fill engine (three-ledger fills) + selector spread-gate docs",
+   "test_idea": "Table test: mid $x.x25 of a $0.10-wide nickel market buys round to $x.x5; SPY $0.02-wide BASE buy = mid+0.35x half-spread ceil'd to next cent; a non-penny contract at $3.10 rounds on the $0.10 grid; nightly regression asserts zero off-grid ledger prices."
+  },
+  {
+   "name": "opening_rotation_quote_gate",
+   "exact_behavior": "An option NBBO is entry-eligible only if two-sided (bid > 0 AND ask > 0) AND it passes the spread gates on two consecutive quotes sampled >=15s apart. No quote or one-sided quote after 09:30 -> classify the series 'opening-rotation pending' (quotes can appear and tighten abruptly up to ~2 min after the underlying's opening print; Cboe force-open timers and 9:45 NOM/BX crosses exist) and re-poll \u2014 do NOT tag 'illiquid'. Additionally, never ingest option marks timestamped 09:30:00-09:32:00 (rotation noise; Option Omega's data itself starts 09:32).",
+   "where": "selector gates + runner marks",
+   "test_idea": "Feed recorded 09:30-09:35 chain snapshots of a gap name: no entry before two consecutive passing quotes; one-sided rows classified pending, not rejected-illiquid; zero persisted marks with t < 09:32."
+  },
+  {
+   "name": "mark_validity_filter",
+   "exact_behavior": "Validate every mark before persistence or exit evaluation: sample NBBO 3x ~1s apart, use median mid and median spread; REJECT crossed (bid > ask) and zero-offer snapshots outright; locked (bid == ask) is valid with mid = bid; bid = 0 with positive ask -> carry forward the last valid two-sided NBBO with a staleness flag (never mark a long OTM at -100% off one zero-bid print); declare a mark unmarkable when relative spread > max(3x trailing 30-min median spread for that contract, 2 ticks, 25% of mid); persist bid SIZE and ask SIZE plus BOTH raw and cleaned NBBO so the replay lab can audit the filter; any mark-triggered exit rule (especially the -50% premium stop, EV(hold)<EV(sell), theta-share dominance) must confirm on the NEXT valid mark before firing \u2014 a single snapshot can never fire a latched exit. Thresholds are our own pre-registered calibrations inspired by (not prescribed by) Andersen et al. 2021 OPRA cleaning.",
+   "where": "runner marks + exit engine",
+   "test_idea": "Inject synthetic paths with one crossed quote, one zero-bid dip, and one 5x-spread flicker mid-trade: assert none fires the -50% stop, stale flags set, raw+clean both persisted; a genuine two-mark breach fires on mark 2."
+  },
+  {
+   "name": "halt_detection_and_exit_queueing",
+   "exact_behavior": "Declare a symbol HALTED when the underlying prints no trades for >60s intraday (gate on liquid/in-play names to avoid thin-name false positives) OR option NBBO bid_date/ask_date freeze >30s while index symbols keep ticking OR the option NBBO is bit-identical across 2+ marks while the underlying moved >0.5% (option-feed-staleness arm \u2014 it cannot detect an underlying halt because the underlying's last price also freezes). While HALTED: freeze ALL exit-rule evaluation, mark ledger rows 'halted', block new entries, and skip entries within 2 minutes after resume (reopen NBBO is auction-rebuilding). Any exit whose trigger fires during a halt is queued and filled on all three ledgers at the FIRST valid post-resume two-sided NBBO (WORST = reopen bid, even if gapped through the stop), timestamped at resume, tagged 'halt-affected'. Halt onset >=15:50 -> no intraday reopen: single-name options get NO same-day post-reopen NBBO \u2014 grade at next session's first two-sided opening-rotation NBBO as gap-through (16:15-class ETF options may print post-16:00). Do NOT model universal order cancellation (Cboe cancels open option orders; Nasdaq-family books persist through the pause). Permanent halt feed: Nasdaq Trader Current Trading Halts / Polygon LULD stream / Alpaca trading_statuses \u2014 Tradier and Finnhub expose NO per-symbol halt status. MWCB arm: premarket L1/L2/L3 = prior SPX close x 0.93/0.87/0.80 with SEPARATE one-shot triggers per level; SPY drawdown <= -6% pre-15:25 -> HALT-SUSPECT (block new entries all lanes); a 7% or 13% print before 15:25 -> freeze marks and exits >=15 min, tag marks halt_suspect, resume only after quote timestamps advance plus one full mark cycle; at/after 15:25 only L3 (-20%) can halt \u2014 rest of day: grade equity/ETF options at last-RTH-sale intrinsic per OCC unscheduled-close guidance, DTE>=1 carries at pre-halt mark to next open (cash-settled index options would use next-day SOQ \u2014 assert unused).",
+   "where": "runner marks + exit engine + grader + day-briefing (MWCB levels)",
+   "test_idea": "Synthetic LULD replay (underlying trades stop, NBBO frozen): -50% stop does not fill at the frozen quote, queued exit fills at first post-resume NBBO with halt-affected tag; MWCB sim at SPX -7.2% 14:00: entries blocked, marks tagged halt_suspect, no exit fills for 15 min; sim at -7% 15:40: no halt triggered."
+  },
+  {
+   "name": "feed_freshness_and_environment_assertion",
+   "exact_behavior": "At session start and hourly: fetch a SPY quote and a near-dated SPY option quote; require |now - trade_date| and quote bid_date/ask_date skew <= 120s during RTH (fields are epoch MILLISECONDS \u2014 divide by 1000; sandbox is ~900s behind, so 120s separates cleanly) else hard-fail the day as tainted and alert; assert base URL is api.tradier.com, never sandbox.tradier.com; assert the chain 'greeks' object is PRESENT (greeks are Not Available on sandbox \u2014 absence is an independent wrong-environment signal); persist the measured skew in each day's ledger header so graded results carry proof of feed freshness. Host clock NTP-synced; first check runs a minute+ after 09:30.",
+   "where": "runner (session bootstrap + hourly watchdog)",
+   "test_idea": "Point a test client at sandbox: assertion trips on both ~15-min skew and missing greeks; production token passes with single-digit-second skew persisted in the ledger header."
+  },
+  {
+   "name": "live_bsm_delta_not_chain_greeks",
+   "exact_behavior": "Never consume the Tradier chain 'greeks' object for any intraday gate \u2014 it is ORATS-computed and refreshed only ~hourly. The 0.40-0.80 delta selection band, <0.35 ban, delta>=0.80 0DTE force-sell extension, delta>=0.7 overnight-hold gate, and effective leverage delta*S/premium in [15,90] all compute delta at decision time from the vendored Hull-verified BSM by solving IV from the live NBBO mid (on the escrowed-dividend S' when applicable). Persist both the solved value and the chain greeks + greeks.updated_at with every snapshot so the lab can quantify the staleness selection would otherwise have inherited.",
+   "where": "selector gates + exit engine",
+   "test_idea": "Fast-tape replay: show chain delta vs live solved delta diverging >0.1 inside one ORATS refresh cycle on a 0DTE trend day; unit test that every gate reads only the solved field; snapshot rows contain both values + updated_at."
+  },
+  {
+   "name": "adjusted_contract_filter",
+   "exact_behavior": "Reject any contract whose Tradier root_symbol contains a digit (OSI adjusted series, e.g. NLY1) OR whose contract_size != 100 (catches 100%-cash-merger adjustments that keep the root unchanged). Do NOT implement as 'root != underlying' (false-positives: BRK.B -> BRKB, SPXW under SPX). Flag any underlying whose chain shows BOTH a suffixed and unsuffixed root on the same expiry (recent adjustment; the new standard series may be days old with thin OI). The OI>=300 gate will NOT catch these \u2014 adjusted series retain large stale OI. Log rejects with root_symbol so the nightly lab can count adjusted-series incidence (expected: concentrated in inplay_orb catalyst names).",
+   "where": "selector gates (contract selection)",
+   "test_idea": "Chain fixture with NLY + NLY1 rows and a contract_size=1 cash-deliverable row: only standard 100-share NLY series pass; BRK.B fixture passes; reject log carries root_symbol; dual-root flag set on the NLY expiry."
+  },
+  {
+   "name": "dte01_iv_dynamics_in_ev_repricing",
+   "exact_behavior": "For DTE<=1 EV(hold)-vs-EV(sell) and P(target) scenario repricing: (1) re-solve IV fresh from the current mark's own NBBO mid \u2014 never carry an IV solved 30+ minutes earlier across 0DTE afternoons; (2) tau = remaining TRADING time with intraday variance weighting, not raw calendar fraction (late-day annualization artifact otherwise inflates EV(hold)); (3) on non-event days seed a time-varying ATM IV: roughly 30-40% linear decline from open to ~14:00 (practitioner-sourced, explicitly labeled unverified), then hold flat / allow modest re-expansion into the close (documented U-shape) \u2014 never extend monotone decay past ~14:00-15:00; (4) skip the deflation schedule in the post-print window on CPI/FOMC days (crush is event-shaped, not clock-shaped); (5) replace the seed with a curve fit from the system's own stored per-mark solved IVs as N accumulates, trimming/down-weighting numerically noisy final-30-60-min back-outs.",
+   "where": "exit engine (EV engine)",
+   "test_idea": "Golden test: 0DTE ATM call at 13:00, flat spot \u2014 EV(hold to 15:00) under the decay schedule < EV under constant IV; pair with the nightly ev_stop_audit grading note (post-14:00 systematic 'hold' bias = artifact leaking)."
+  },
+  {
+   "name": "post_close_window_scoping",
+   "exact_behavior": "(1) Assert in exit_engine first-match ordering that the 0DTE 15:00/15:30 force-sell strictly dominates the 16:00-16:10 index management window: the window applies ONLY to DTE>=1 (or non-expiring) contracts in 16:15-eligible ETF classes (SPY/QQQ/IWM/DIA), never to any contract expiring that day via that path, and never to cash-settled index contracts on expiry (expiring SPXW/XSP stop at 16:00) \u2014 assert unused. (2) For every position still open at 15:55: force marks at 15:55, 15:58-16:00, 16:00:30, 16:05, and continue 1-min full-NBBO (with sizes) marking through 16:15 \u2014 without this the nightly lab cannot price, replay, or ever retire the 16:10 rule. (3) Post-16:00 exits grade at the stored post-close NBBO on WORST as usual AND are dual-recorded against the 15:58-16:00 snapshot (see grading note post_close_exit_cohort); after 2026-07-13, single-stock 16:00-16:15 Curb quotes ('v'-marked/smoothed NBBO) are non-gradable \u2014 assert the window is index-ETF-only.",
+   "where": "exit engine (rule precedence) + runner marks",
+   "test_idea": "Unit: a 0DTE SPY call at 15:31 with delta 0.85 is already force-sold and can never reach the 16:00+ path; integration: a DTE=2 QQQ position open at 15:59 produces the complete extra-mark set through 16:15 in storage; assert error on any single-stock symbol entering the post-16:00 path."
+  }
+ ],
+ "registered_candidates": [
+  {
+   "name": "fomc_direction_source_fork",
+   "hypothesis": "Since March 2020 the market tends to move OPPOSITE during the 14:30 press conference vs the 14:00 statement, and the presser move is larger (De Pooter FEDS 2021: avg |0.47%| presser vs |0.32%| statement; Narain-Sangani IJCB 2026) \u2014 so macro_reaction's 14:00->14:15 direction read positions the FOMC leg on the wrong side. Variants: A = current 14:00->14:15; B = 14:30->14:45 presser-open direction; C = require A and B to agree, else no trade.",
+   "evidence_needed": "Per-meeting paired replay on stored NBBO at the remaining 2026 FOMC decisions (Jul 29, Sep 16, Oct 28, Dec 9); statement_dir vs pressconf_dir agreement flagged on every FOMC fill from day 1; no live change before evidence (only 4 events in H2 \u2014 expect slow accumulation)."
+  },
+  {
+   "name": "fomc_entry_timing_fork",
+   "hypothesis": "The 14:46 entry sits mid-presser (pressers run 45-60 min, ending 15:15-15:30); delaying entry to post-presser (~15:31 or presser-end detection \u2014 NOT 15:16, which lands mid-Q&A when it runs long), or re-confirming the 14:15 direction at 15:00, plus a 1-min invalidation cadence until 15:30, reduces mid-Q&A reversal losses. Sources genuinely conflict (ipresage: ~40% of statement reactions partially/fully reverse by close; Option Alpha: FOMC days close on their extremes, SPX ~2% vs 1.25% normal).",
+   "evidence_needed": "Paired replay of A (14:46), B (re-confirm at 15:00: same side of the 14:00-14:15 range extreme), C (enter ~15:31) per meeting on stored NBBO; tag whether 14:30-15:30 crossed back through the 14:00 price; accumulate across meetings before any change."
+  },
+  {
+   "name": "fomc_morning_index_trend_suppression",
+   "hypothesis": "FOMC mornings are compressed and range-bound (volume 20-35% below 20d average, ranges ~30-50% of a normal morning \u2014 use RELATIVE compression, not absolute ES points), so 09:30-14:00 index_trend entries buy chop and get force-flattened pre-print paying WORST spread; BUT the pre-FOMC drift is on average UPWARD (~49bp, Lucca-Moench, positive through 2024), so long entries may still grade positive. Candidate: suppress new index_trend entries after 12:00 ET on FOMC days.",
+   "evidence_needed": "Paired entry/exit replay on stored NBBO across FOMC days; do NOT arm on priors."
+  },
+  {
+   "name": "index_trend_contraction_eligibility",
+   "hypothesis": "Trend days erupt from range CONTRACTION (Crabel qualitative: ORB most effective after inside/NR7 days, 'inside days act as springboards'; Raschke trend-day playbook), so the current 14d realized-range percentile >=50 gate is oriented OPPOSITE the evidence; honest caveat: modern backtests find the standalone directional edge marginal \u2014 the validated expectation is range EXPANSION, which is exactly what an eligibility gate needs. Variants: B = prior day NR7-or-inside-day OR prior-day realized-range percentile <=50 (sign corrected from the original draft); C = NR7/inside-day alone. Never cite the unverifiable '60-76% ORB win rate'.",
+   "evidence_needed": "N=25 fired-days per arm in the nightly replay (all inputs are daily bars already on hand); current gate stays live meanwhile."
+  },
+  {
+   "name": "opex_pinning_conviction_block",
+   "hypothesis": "Late-day continuation is damped toward big-OI strikes on expiration days (Ni-Pearson-Poteshman JFE 2005: >19% of optionable-stock closes within $0.25 of a strike vs <18% adjacent, >=16.5bp average alteration; Zhang et al. 2015: 8.2% exact-strike pins vs <6%; Golez-Jackwerth futures) \u2014 strongest for single names; index-ETF pinning is weaker and possibly REVERSED (2016-2025 SPY study finds amplification, ~16% wider ranges on high near-expiry-OI days). Candidate: block or halve conviction of index_trend entries after 14:00 and all last30 entries on monthly opex; hard-block last30 on 2026-09-18 and 2026-12-18 (witching + S&P rebalance MOC).",
+   "evidence_needed": "is_opex/is_witching stamped on every fill from day 1; N>=25 affected trades in the split; the pinning-vs-amplification conflict is resolved by our own cohort data, not priors \u2014 do not build the block first."
+  },
+  {
+   "name": "witching_open_entry_delay",
+   "hypothesis": "On witching mornings (2026-09-18, 12-18) the open is SOQ settlement mechanics, not trend (AM-settled SPX complex settles on component opening prints, which can be imbalance-delayed well past 09:35), so delaying index_trend's first entry to 10:15 improves entry quality (weak version on monthly opex Fridays). The >=09:45 first-confirmation rule is already armed as a grading bucket; this candidate extends it to 10:15.",
+   "evidence_needed": "soq_morning covariate logged from day 1; paired delayed-first-entry replay on stored NBBO across witching/opex mornings."
+  },
+  {
+   "name": "orb_spread_gate_deferral",
+   "hypothesis": "Single-name option spreads decline through the FIRST HOUR, not the first minutes (Chan-Chung-Johnson JFQA 1995; Cao-Jacobs-Ke), so many first-10-minute inplay_orb spread-gate rejections would pass later; re-checking the gate after signal recovers entries without paying rotation-regime spread. Grade MULTIPLE horizons since 2-3 min is likely too short.",
+   "evidence_needed": "Paired replay of signal-time entry vs +3/+10/+15/+30 min deferred gate re-check on stored NBBO, N>=25; no lunchtime-deferral build (SPX flat midday; SPY's U-shape trough deprioritized, not ruled out)."
+  },
+  {
+   "name": "base_ledger_per_class_recalibration",
+   "hypothesis": "Measured wholesaler/auction improvement is a median $0.05 in the quoted option price (i.e. $5/contract) and rarely exceeds one tick on tight markets (Ernst-Spatt; Bryzgalova et al.), so a class-conditional BASE \u2014 index ETFs: fill = ask - $0.01 if spread >= $0.02 else ask; single names: fill = ask - min($0.05, half-spread), both tick-rounded \u2014 tracks real retail fills better than the global mid+/-0.35x half-spread.",
+   "evidence_needed": "Paired replay over N>=25 trades per lane showing the recalibrated BASE tracks WORST-vs-OPTIMISTIC realized outcomes better than the 0.35x rule; adopt per-lane only on that evidence."
+  },
+  {
+   "name": "dera_rest_then_cross_tactic",
+   "hypothesis": "SEC DERA (Fu-Li-Musto-Pearson 2025, SPXW 0DTE LOB) shows 'rest an improving order ~1s then convert to marketable' costs ~$0.021-0.028 vs $0.05 for immediate marketable \u2014 a passive-then-cross entry/exit tactic may beat marketable-at-mark on the WORST ledger, and it is replayable offline from stored NBBO paths.",
+   "evidence_needed": "v0 (marketable-at-mark) vs v1 (rest at mid one mark interval; count a passive fill ONLY when the opposite side TRADES through, not touches \u2014 no queue position; else cross at next mark's NBBO), N>=25 paired trades per lane on WORST; do NOT import SPXW fill-rate priors to ETF/single-name lanes."
+  },
+  {
+   "name": "theta_cliff_1400_exit",
+   "hypothesis": "LOWERED PRIOR (evidence corrected): the measured 0DTE collapse is ~15:30 (Option Alpha minute-level study), which the existing 15:00 force-sell already avoids; the 14:00 inflection exists only in an unverified practitioner figure (>15%/hr after 14:00). Candidates: exit 0DTE at 14:00 when unrealized P&L < +25% AND |delta| < 0.60; and move last-allowed 0DTE entry from 14:00 to 13:30.",
+   "evidence_needed": "N=25 paired replayed trades per variant vs the 15:00 baseline on the WORST ledger; re-register with the corrected rationale (tests the unverified practitioner inflection, not the measured cliff)."
+  },
+  {
+   "name": "dte0_forcesell_timing_sweep",
+   "hypothesis": "The 15:00 force-sell (delta>=0.80 extension to 15:30) is well-placed against the decay/liquidity profile, but the optimum is measurable in-house; the 15:30 extension is decay-tolerant (little extrinsic) but not spread-tolerant on WORST, so it may need a spread cap (extend only if current spread <= entry spread x 1.5).",
+   "evidence_needed": "Stored-NBBO paired replay of force-sell at 14:30 / 15:00 / 15:30 split by delta band (<0.6 / 0.6-0.8 / >=0.8), WORST-graded, verdict at N=25 extension uses; verify the 2-min afternoon cadence actually captures the post-15:30 spread blowout (15:25-vs-15:55 half-spread ratio > 2x triggers the spread-cap gate); never extend past 15:30 under any variant."
+  },
+  {
+   "name": "last30_macro_exit_time_sweep",
+   "hypothesis": "The 15:55 designed exit sits after the 15:50 imbalance publication (first-wave repricing ~5.5bp, absorbed in ~300ms) but before the 15:58-16:00 impact spike (NYSE: 0.34x -> 0.40x daily avg spread impact for R1000); alternatives \u2014 15:48/15:50 pre-publication, 15:59, quarter-end-only 15:49, or manage-to-16:10 \u2014 may grade better per lane. End-of-day reversal literature marks 15:55-16:00 adverse for continuation holders: variants may replay EARLIER but never later than 15:58.",
+   "evidence_needed": "Paired replay exit@15:48 / 15:50 / 15:55 (champion) / 15:59 / 16:10-path for last30 and macro_reaction on stored NBBO, WORST-graded, N>=25 paired fills; encode the never-past-15:58 rail as close-minus-2-minutes (12:58 on half days); log per-symbol 15:50->16:00 drift expecting QQQ (Nasdaq cross) vs SPY/IWM (Arca) microstructure to differ."
+  },
+  {
+   "name": "moc_imbalance_opposition_exit",
+   "hypothesis": "A large opposing published closing imbalance at 15:50 (> ~2% of CADV, above the NYSE-measured 0.47-1.18% persistent-impact band) predicts adverse 15:50-16:00 drift; exit immediately instead of 15:55. CORRECTED constraints: imbalance feeds are PAID (NYSE Order Imbalances ~$500/mo+; Nasdaq NOII via TotalView), and the 15:50 near-committed property holds for NYSE/Nasdaq-listed names (QQQ) but NOT Arca-listed SPY/IWM (cancelable until 15:59; Arca disseminates from 15:00).",
+   "evidence_needed": "Log the FREE proxy from day 1 (sign/size of SPY 15:50:00->15:52:00 move vs the 15:30-15:50 drift) on every position open at 15:50; only consider a paid feed if the proxy shows signal at N>=25; validate the 15:51-cut variant on stored NBBO before any build."
+  },
+  {
+   "name": "oi_floor_waiver",
+   "hypothesis": "OI is T-1 by construction (OCC posts next morning), so the OI>=300/1000 gate wrongly vetoes strikes ADDED to existing expiries <=2 sessions ago (the real zero-OI-but-liquid case) \u2014 but NOT day-one 0-2 DTE index expiries, which are listed weeks ahead and carry stale-but-substantial OI (the originally proposed 'series listed <=2 sessions' branch would never fire). Corrected waiver: pass when strike_add_date <= 2 sessions ago, or unconditionally when same-day volume >= 500 (index) / 250 (single name) AND the spread/quote-depth gates pass \u2014 volume plus tight two-sided quotes are the only real-time liquidity proof.",
+   "evidence_needed": "Log oi_asof_date, series_listing_date, strike_add_date (first-seen per OCC symbol), and oi_zero_but_active on every scan from day 1; count the vetoed-then-tracked cohort's counterfactual value before arming."
+  },
+  {
+   "name": "exdiv_flat_vs_holdthrough_replay",
+   "hypothesis": "The pre-ex-div force-flat guard is theoretically correct (holding forfeits ~(dividend - extrinsic)); its realized cost/benefit should still be proven on our own paths.",
+   "evidence_needed": "Nightly-lab paired replay of 'flat day before ex-div' vs 'hold through' on stored NBBO across every wired H2-2026 ex-date; expect hold-through to lose ~delta x dividend net of extrinsic."
+  },
+  {
+   "name": "post_close_1558_flat",
+   "hypothesis": "If measured post-16:00 spread cost exceeds the thesis value of the extra ~12 minutes, hard-code flat by 15:58 and retire the 16:10 index-ETF management window. CONFLICT preserved: one finding says demote to emergency-close-only now; the better-cited corrected findings say measure first from stored NBBO (the 'dimes-to-half-dollars' widening figure is unsourced folklore; near-the-money SPY/QQQ may widen only cents).",
+   "evidence_needed": "~25 post-close exits with the dual marks from post_close_window_scoping; pre-registered retirement triggers: median 16:00-16:10 half-spread > 1.5x the 15:45-15:59 median, or median after_hours_exit_cost > ~5% of premium; paired 'exit 15:55/15:58 vs manage to 16:10' replay judged on WORST."
+  }
+ ],
+ "covariates": [
+  {
+   "name": "last30_ghlz_conditioners",
+   "formula": "r1 = SPY 09:30-10:00 return (measured from prior close, per the paper); rv_fh = realized vol of 1-min SPY returns 09:30-10:00, tercile vs trailing ~1yr; vol_fh = SPY 09:30-10:00 volume / trailing-year same-window average (year-detrended tercile); macro_release flag on the paper's set {MCSI 10:00, GDP 08:30, CPI 08:30, FOMC-minutes 14:15} with NFP as a SEPARATELY LABELED extrapolation; agree_dir = sign(r1) == sign(open->15:30 move); day volume vs 14d avg as secondary labeled proxy",
+   "which_record": "every last30 fill (all three ledgers)"
+  },
+  {
+   "name": "net_gex_and_gamma_flip",
+   "formula": "~09:00 job from prior-day Tradier chains (greeks=true, OI per strike): GEX = sum(gamma_i x OI_i x 100 x S), calls positive / puts negative, per SPY/QQQ/IWM; net_gex_sign, magnitude, and spot distance to gamma-flip strike in % and 14d-ADR units; annotated 'ex-0DTE, OI-derived \u2014 not same-day dealer positioning'",
+   "which_record": "day briefing + every index_trend and last30 fill"
+  },
+  {
+   "name": "pin_distance",
+   "formula": "(spot - nearest strike with top-decile same-day-expiry OI) / 14d ADR, plus that strike's OI; near-the-money (+/-1%) same-day-expiry OI; logged at entry and at each mark after 14:00 for DTE 0-1 index positions; distance_to_nearest_strike_pct at entry for inplay_orb names on opex days",
+   "which_record": "last30 + late-day/DTE0-1 index_trend entries and marks; inplay_orb opex entries"
+  },
+  {
+   "name": "trend_day_tells_1000",
+   "formula": "At 10:00 daily (zero new feeds): first30_range / 14d_ADR (<0.25 trend-compatible; >0.35 with no new extreme = chop tell); open_outside_prior_day_range (bool); first30_volume vs 5d same-window avg (>1.5x tell); SPY and QQQ same side of session VWAP (bool); premarket prior_day_NR7 (bool); new_session_extreme_within_15min_of_break (bool at entry)",
+   "which_record": "daily row + every index_trend trade; at N=25 test whether PnL concentrates in >=3-of-4 tells"
+  },
+  {
+   "name": "etf_vwap_agreement",
+   "formula": "Per 5-min mark and at every index_trend entry: count of SPY/QQQ/IWM on the signal side of their own session VWAP {3of3, 2of3, split} plus per-ETF own noise-area-break agreement (3-bit score). Cross-index divergence is folklore (no rigorous evidence) \u2014 logged covariate only, gate requires N=25 WORST-ledger separation",
+   "which_record": "index_trend entries + every 5-min mark"
+  },
+  {
+   "name": "minutes_to_next_macro_print",
+   "formula": "Minutes to next wired FOMC/CPI/NFP event from the 2026 macro calendar",
+   "which_record": "every entry, exit, and mark"
+  },
+  {
+   "name": "quote_provenance",
+   "formula": "bid_date / ask_date (epoch ms) + underlying quote timestamp persisted per mark; derived quote_age_ms and stale flag (age > 15s); bid_size and ask_size (needed to identify 1x1 obligation quotes)",
+   "which_record": "every stored mark (raw and cleaned NBBO both persisted)"
+  },
+  {
+   "name": "intraday_spread_curve",
+   "formula": "Quoted spread in ticks and % of mid at entry and exit, bucketed 09:35-10 / 10-11 / 11-14 / 14-15:30 / 15:30-15:55 / 15:55-16:15, per lane; plus per-symbol half-spread snapshot at 15:55, 16:00, 16:05, 16:10 daily (makes the system the first clean measurement of post-close ETF-option widening); half_spread_at_fill and half_spread/premium per leg on every fill",
+   "which_record": "all fills + daily per-symbol table; replaces literature priors after ~30 sessions"
+  },
+  {
+   "name": "markout_curves",
+   "formula": "markout_k = side x (mid_{t+k} - fill_price) for k in {1,5,15,30} min, in option-premium terms and delta-adjusted-underlying terms (entry delta), for every entry and exit on all three ledgers; aggregated per lane and per triggering exit rule; report-only flag: lane median entry markout_5 < -0.25x half-spread = 'adversely selected'",
+   "which_record": "nightly lab module over stored mark paths"
+  },
+  {
+   "name": "mfe_mae_exit_efficiency",
+   "formula": "Per trade on the BASE mark path: MFE, MAE, time-of-MFE, exit_efficiency = realized / MFE (when MFE > 0), exit_lag_cost = value at first rule-breach mark minus value at graded exit mark; broken out by triggering exit rule (all 26) and lane; pre-registered follow-on: median 0DTE exit_lag_cost > 5% of premium -> afternoon cadence 2-min becomes 1-min (class-A data change)",
+   "which_record": "every trade, nightly; feeds the pre-registered stop/take/trail variant grid (-40/-50/-60%, +80/+100%, trail 20/25/30%)"
+  },
+  {
+   "name": "weekend_hold_cohort",
+   "formula": "over_weekend (bool) + calendar_days_held on every overnight hold; Fri->Mon single-name holds graded as their own cohort, never pooled with midweek 1-night holds (Jones-Shemesh: -0.62% avg Fri-close->Mon-close option returns); 'not Friday' clause frozen \u2014 relaxation requires this cohort to independently clear N=25 positive on WORST",
+   "which_record": "every overnight hold; grade_options_shadow.py cohorts"
+  },
+  {
+   "name": "expiry_ladder_fields",
+   "formula": "expiry_dte, expiry_type {daily, weekly, monthly}, days_since_series_listed, strike_add_date (first-seen date per OCC symbol), oi_asof_date, oi_zero_but_active flag, is_expiration_week; grade inplay_orb conditioned on weekly-class vs monthly-only underlyings before pooling",
+   "which_record": "every scanned candidate + every fill"
+  },
+  {
+   "name": "penny_class_and_rejection_reason",
+   "formula": "penny_program_member (bool, refreshable exchange list), quoted spread in ticks, and which gate rejected the candidate (10%-of-mid vs $0.30 abs); never pool spread statistics across a name's penny/non-penny regime boundary (Jan/Apr rebalances)",
+   "which_record": "every scanned candidate"
+  },
+  {
+   "name": "halt_events",
+   "formula": "pause_count per trade; halt-affected / halt-crossed / gap-through tags; detected-pause log (onset, duration, reopen NBBO, reopen gap vs pre-halt mark)",
+   "which_record": "inplay_orb trades + runner event log (from the halt guard's detector)"
+  },
+  {
+   "name": "imbalance_proxy_1550",
+   "formula": "Sign and size of SPY 15:50:00->15:52:00 move relative to the 15:30-15:50 drift for every position open at 15:50; per-symbol 15:50->16:00 underlying drift (QQQ Nasdaq-cross vs SPY/IWM Arca split); recorded as known-missing real feed (paid), not proxied silently",
+   "which_record": "every last30 / macro_reaction position open at 15:50"
+  },
+  {
+   "name": "soq_and_vix_expiry_mornings",
+   "formula": "soq_morning = true for entries before 10:15 on 2026-09-18 and 2026-12-18 (weak version on monthly opex Fridays); vix_expiration_today = true on 2026-07-22, 08-19, 09-16, 10-21, 11-18, 12-16 with pre-09:45 index_trend signals included in the covariate set",
+   "which_record": "index_trend entries"
+  },
+  {
+   "name": "macro_direction_alignment",
+   "formula": "CPI/NFP: 09:45 entry tagged aligned / contra / faded vs the 08:30 ES/NQ futures reaction (hypothesis: contra entries are the losing subset; NDX/QQQ outperforms SPY on CPI); FOMC: statement_dir vs pressconf_dir agreement (did 14:30-15:30 cross back through the 14:00 price)",
+   "which_record": "every macro_reaction fill"
+  },
+  {
+   "name": "deep_itm_extension_mae",
+   "formula": "15:00-15:30 max adverse excursion for every delta>=0.80 0DTE force-sell extension use (accepted-risk costing: near-linear exposure through the documented close-window jump-intensity peak)",
+   "which_record": "every extended 0DTE trade"
+  },
+  {
+   "name": "calendar_stamps_on_fills",
+   "formula": "is_opex, is_witching, is_month_end, is_quarter_end, is_index_rebalance_close (2026-09-18, 12-18), collar_roll, is_half_day, ex_div flags stamped from the briefing onto every fill row",
+   "which_record": "every fill row in all three ledgers (enables ex-witching / ex-month-end lane re-grades at N=25)"
+  },
+  {
+   "name": "per_mark_solved_iv",
+   "formula": "IV backed out from each mark's NBBO mid via the vendored BSM with trading-time tau, stored alongside the chain greeks object + greeks.updated_at (quantifies ORATS staleness and feeds the 0DTE intraday IV-decay curve fit)",
+   "which_record": "every stored mark"
+  },
+  {
+   "name": "gap_stamps_on_trades",
+   "formula": "gap_pct, gap_vs_ADR, gap_dir (from the 09:28 briefing) stamped on every index_trend and inplay_orb trade; |gap| >= 1% (or >= 0.75x ADR) days graded separately, with-gap vs against-gap entries split",
+   "which_record": "index_trend + inplay_orb fills"
+  },
+  {
+   "name": "eod_reversal_pair",
+   "formula": "Per last30/macro trade: underlying move 15:30->16:00 official close, and close->next-open return (gates any future overnight-hold variant for these lanes on measured continuation vs the documented overnight reversal)",
+   "which_record": "every last30 / macro_reaction trade"
+  }
+ ],
+ "briefing_flags": [
+  {
+   "name": "vix_close_bucket",
+   "source": "Cboe free daily CSV https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv (prior-day close)",
+   "dates_2026": "daily; buckets <15 (index_trend edge historically weak) / 15-20 / >20 (edge zone per Zarattini et al., Sharpe rising to ~3.5 above VIX 40) / >30"
+  },
+  {
+   "name": "vix_vix3m_ratio",
+   "source": "Cboe VIX_History.csv + VIX3M_History.csv (same free directory), prior-day closes",
+   "dates_2026": "daily; buckets <0.85 contango / 0.85-1.0 warning / 1.0-1.10 backwardation-stress / >1.10 panic; no behavior change until per-bucket lane stats exist"
+  },
+  {
+   "name": "vix1d_expansion_ratio",
+   "source": "Cboe VIX1D dashboard (free delayed) or Yahoo ^VIX1D; implied_day_move_pct = VIX1D/sqrt(252); expansion_ratio = implied_day_move / 14d avg daily range",
+   "dates_2026": "daily; log raw (no haircut) \u2014 >=1.25 'expansion-priced', <=0.8 'compression-priced' as prebuilt covariate gates; VIX1D carries a documented intraday-rise/overnight-fall mechanical bias, so use the premarket read only"
+  },
+  {
+   "name": "opex_and_witching",
+   "source": "Exchange calendar (Cboe 2026 options calendar), holiday-aware derivation per the expiration guard",
+   "dates_2026": "is_opex: Jul 17, Aug 21, Sep 18, Oct 16, Nov 20, Dec 18; is_triple_witching: Sep 18, Dec 18; post_opex_expansion flag on following Mon/Tue; no H2-2026 holiday shifts remain (Jun 18 Thursday shift already passed)"
+  },
+  {
+   "name": "month_end_quarter_end",
+   "source": "NYSE trading calendar",
+   "dates_2026": "month_end: Jul 31, Aug 31, Sep 30, Oct 30, Nov 30, Dec 31; quarter_end: Sep 30, Dec 31; quarter_end_window: last 3 trading days of Sep and Dec; rebalance_pressure sign hint = opposite of the quarter's equity-vs-bond relative move"
+  },
+  {
+   "name": "half_day",
+   "source": "NYSE/Cboe published calendars (NYSE 2025-2027 press release; Cboe hours page)",
+   "dates_2026": "Nov 27 and Dec 24 only: close_equity 13:00 ET, close_etf_options 13:15 ET; briefing repeats the shifted close-relative exit clock from the half-day guard"
+  },
+  {
+   "name": "ex_div_today_tomorrow",
+   "source": "Issuer schedules: SSGA SPDR Dividend Distribution Schedule PDF (SPY/DIA, published/confirmed), iShares distributions schedule (IWM, published), Invesco/Wall Street Horizon (QQQ, declared ~2 days prior)",
+   "dates_2026": "SPY: Sep 18, Dec 18 (~$1.90); DIA: Jul 17, Aug 21, Sep 18, Oct 16, Nov 20, Dec 18 (~$0.55-0.70/mo); IWM: Sep 15, Dec 15 (~$0.68-0.85); QQQ: Sep 21, Dec 21 (pattern-projected ~$0.70-0.85); watch SPY/DIA Dec 31 potential excise distribution; fields carry the declared dollar amount"
+  },
+  {
+   "name": "vix_expiration_today",
+   "source": "Cboe expiration calendar / macroption VIX calendar (SOQ off the SPX opening auction)",
+   "dates_2026": "Jul 22, Aug 19, Sep 16, Oct 21, Nov 18, Dec 16 \u2014 note Sep 16 stacks with the FOMC decision afternoon"
+  },
+  {
+   "name": "collar_roll_today",
+   "source": "JHEQX quarter-end roll; live short-call strike from SpotGamma/MenthorQ each quarter (pull live \u2014 partial 2026 migration to CME SME/BTIC reduces SPX-chain visibility)",
+   "dates_2026": "Sep 30 and Dec 31; carry distance from SPX spot to the current short-call strike with note 'roll flow concentrated 14:00-16:00; pin risk only if spot within ~1% of the short call'"
+  },
+  {
+   "name": "macro_print_schedule",
+   "source": "Fed FOMC calendar + BLS release schedule (already partially wired)",
+   "dates_2026": "FOMC decision days: Jul 29, Sep 16, Oct 28, Dec 9 (meetings Jul 28-29, Sep 15-16, Oct 27-28, Dec 8-9); fomc_presser_window field = 14:30-15:30 (conservative envelope; pressers run 45-60 min) keying the 1-min mark-cadence upgrade; day's CPI/NFP/GDP/MCSI print times feed minutes_to_next_macro_print"
+  },
+  {
+   "name": "gap_fields",
+   "source": "Own premarket bars at ~09:28: gap_pct = (indicative open - prior close)/prior close (dividend-adjusted on ex-mornings per the anchor guard), gap_vs_ADR, gap_dir, gap_bucket at 0.25/0.5/1.0 x 14d ADR per SPY/QQQ/IWM",
+   "dates_2026": "daily"
+  },
+  {
+   "name": "mwcb_levels",
+   "source": "Computed prior SPX close x 0.93 / 0.87 / 0.80, cross-checked against nasdaqtrader.com circuit-breaker page (rounding can differ ~cents)",
+   "dates_2026": "daily; reminder text: 'L1/L2 inert at/after 15:25 ET; L3 (-20%) ends the day at any time'"
+  },
+  {
+   "name": "adr_14d_lookup",
+   "source": "Own daily bars: precomputed 14d avg daily range per index so last30's |open->15:30| > 0.5x threshold is a single lookup; hard note that last30 exit variants may replay earlier but never later than 15:55",
+   "dates_2026": "daily"
+  },
+  {
+   "name": "cpi_nfp_futures_reaction",
+   "source": "ES/NQ futures 08:30-08:35 on CPI/NFP dates: reaction size and sign, implied gap at 09:15, flag |reaction| > 0.5x 14d ADR",
+   "dates_2026": "every CPI/NFP date (feeds the macro_direction_alignment covariate)"
+  },
+  {
+   "name": "expiration_ladder_per_candidate",
+   "source": "Tradier chains: next three expiries with DTE per candidate underlying, expiration_week and weekly_available flags; tick-regime reminder on first trading day of January (penny additions) and April (removals)",
+   "dates_2026": "daily per candidate; tick-regime-change dates: 2027-01-04-ish and 2026-04-01 already passed / next Jan"
+  },
+  {
+   "name": "orb_candidate_microstructure",
+   "source": "Per inplay_orb candidate: penny/non-penny status (exchange list), prior-day 10:00-15:30 median quoted spread of the target delta bucket, delayed-opening-auction likelihood (large gap + halt history); entries before 11:00 scored as a separate cohort (spread normalization ~open+90min)",
+   "dates_2026": "daily per candidate"
+  },
+  {
+   "name": "expiring_today_per_contract",
+   "source": "Own position book x expiration calendar: expiring_today flag per held contract with note '16:00-16:15 window valid for SPY/QQQ/IWM/DIA ETF options even at DTE=0 (sale grades at stored bid); never for cash-settled index products; auto-exercise moneyness fixed at the 16:00 official close'",
+   "dates_2026": "daily"
+  }
+ ],
+ "grading_notes": [
+  {
+   "name": "last30_stratified_verdict",
+   "note": "Grade last30 pooled AND stratified on the Gao-Han-Li-Zhou conditioners actually published (first half-hour realized-vol tercile, first half-hour volume tercile vs trailing year, macro set = MCSI/GDP/CPI/FOMC-minutes with NFP as labeled extrapolation). Pre-registered rule: pooled-negative but high-vol/high-volume-stratum-positive at N=25 = calibration finding arguing for a registered gate, NOT a lane kill (paper: low-vol tercile slope insignificant at 2.34 t=1.03 vs 7.20*** high; but the paper finds low strata WEAKER-positive, never negative \u2014 the pooled-negative decision rule is ours, acknowledge it). Two lens findings proposed different proxies (day volume >=1.2x 20d; 15:30 cumulative volume vs 20d) \u2014 grade on the paper's ex-ante first-half-hour variables; keep proxies only as secondary, explicitly labeled stamps."
+  },
+  {
+   "name": "gex_report_only",
+   "note": "GEX-sign buckets are report-only: no lane verdict may be conditioned on, or a loss excused by, dealer-gamma narratives until the lab shows per-sign R separation with N>=25 per side (Cboe primary source: 0DTE MM net gamma $170-670mm = 0.04-0.17% of S&P futures liquidity, 'no discernible market impact'; independent academic corroboration finds typical OMM gamma impact REDUCES vol ~0.2pp). Brief the covariate as 'ex-0DTE, OI-derived \u2014 not same-day dealer positioning'. Companion accepted-risk: 0DTE-specific flow signals (0DTE put/call tape, 0DTE-only GEX) are rejected on Cboe evidence \u2014 aggregate all-expiry GEX is the only dealer-positioning covariate logged; revisit only on new published measurement."
+  },
+  {
+   "name": "post_close_exit_cohort",
+   "note": "Every exit timestamped >=16:00 is tagged 'post-close window' per symbol against the ~64-class 16:15-eligibility list (a 16:00+ fill in a non-eligible class is a data error \u2014 flag it). Grade dual: at the actual post-close NBBO on WORST, AND against the stored 15:55/15:58-16:00 snapshot; report the post/pre spread ratio and after_hours_exit_cost per lane. MEASURE the widening from stored NBBO \u2014 the '$0.02 -> $0.15-0.50' figure is unsourced practitioner folklore and the underlying does keep printing after-hours (mechanism is hedging-reference degradation, not stopped prints). BASE/OPTIMISTIC declared non-comparable for post-close fills. Retirement of the 16:10 window is a registered candidate (post_close_1558_flat), not a tonight decision \u2014 CONFLICT with the one finding urging immediate emergency-only demotion is resolved in favor of the better-cited measure-first corrections."
+  },
+  {
+   "name": "execution_ledger_calibration",
+   "note": "Keep WORST as the headline falsification ledger \u2014 it is genuinely executable at 1-lot (firm-quote rule; no depth/partial-fill model needed, accepted residual = sub-second quote fade). Relabel BASE 'average execution-timer' (Muravyev-Pearson RFS 2020: timers pay 29.6% of quoted half-spread; timing-adjusted all-trader average ~58%; naive taker ~0.79x \u2014 the documented mechanism is execution TIMING vs fair value, not limit-at-mid). Add a fourth synthetic ledger at mid+/-0.584x half-spread. Re-register BASE at 0.50x for non-penny single names (BPS 2023: retail effective/quoted ~0.46-0.52) \u2014 and note the same paper shows ETF-option ratios ALSO ~0.52, so keeping 0.35x for SPY/QQQ/IWM is NOT paper-supported: report every lane verdict under both 0.35x and 0.50x; a sign flip between them = not proven. Add the per-lane spread-fraction breakeven sweep f* (f in 0..1.0 on stored NBBO): f* >= 1.0 robust; 0.35 <= f* < 1.0 verdict 'EXECUTION-BOUND, not signal-dead' (research fix = entry/exit timing, not the signal); f* < 0.35 dead."
+  },
+  {
+   "name": "spread_tax_reporting",
+   "note": "Report each lane's N=25 verdict twice: raw WORST and mid-to-mid gross \u2014 the correct spread-free comparator is OPTIMISTIC/gross (worst_net + spread_paid = gross by construction; spread_paid_usd and NBBO at both legs are ALREADY persisted in build_exit_record \u2014 only derived per-leg half_spread/premium fields are new). Kill a lane only if BOTH raw WORST and gross are negative; raw-fails/gross-passes = registered exit-timing fix, not lane death. Additionally report WORST-minus-BASE per exit-time bucket (pre-15:00 / 15:00-15:45 / post-15:45): 15:55 and 16:00-16:10 exits sit in the documented index-option deterioration zone, while the 15:00-15:30 0DTE window is taxed via the RELATIVE channel (half-spread/premium explodes as premium collapses), and single-name options show no close spike at all (CCJ 1995). Units corrected: SPY/QQQ/IWM ATM spread tax is ~$1-3 per contract round trip (100x multiplier), so treat any index-lane edge under ~$5/contract round trip as inside execution noise. Document that WORST overstates measured retail cost roughly 2x (retail quoted ~2x retail effective; Beckmeyer et al. Dec-2023: retail effective 6.0%/5.0% vs non-retail 12.5%/9.6%, quoted spreads roughly doubling under 1 hour to expiry)."
+  },
+  {
+   "name": "macro_event_attribution",
+   "note": "On CPI/FOMC dates run the 1-min marking cadence from print time to print+45min (not only the final 30) and store the dense NBBO path. Decompose every macro_reaction and same-day index_trend trade's P&L into delta (thesis) vs vega (event-vol) components via back-out-IV at entry / reprice-at-entry-IV per mark \u2014 SIGNED attribution, because straddles UNDERPRICED the move in a nontrivial minority of recent meetings (2 of 12 in both samples), so vega is not always a drain. Report 'thesis P&L' separately in the per-lane scorecard so the N=25 macro_reaction verdict is not dominated by mechanical post-event IV drainage; expect and document a wider WORST-vs-BASE gap on macro days rather than 'fixing' the lane on n=1 bad fills. Settled accepted-risk companion (Wright w28306 event variance premia + PIT tests): the flat-before-print rule and post-print entries are structurally on the profitable side \u2014 never register a 'hold through the print' variant; options DEAD-list entry."
+  },
+  {
+   "name": "dte0_decay_attribution",
+   "note": "Decompose every 0-1 DTE trade's P&L into delta-move vs clock decay using the MEASURED intraday curve shape (Option Alpha minute-level study: inverse sigmoid, acceleration onset ~12:00-13:00 per corroborating practitioner arithmetic, sharpest collapse ~15:30), normalized to each trade's own extrinsic \u2014 never BSM calendar theta/365. Do not encode '2%/hour at open' (sources conflict, 2-12%/hr range); treat only the ordering (morning slow, afternoon fast) and the ~15:30 collapse as measured. Bucket scheduled-macro days separately (decay has discrete event cliffs there). A 0DTE position held 14:00->15:00 losing to pure decay is not thesis failure; any replay variant extending 0DTE holds past 15:30 is flagged as fighting the documented collapse (the delta>=0.80/15:30 boundary is verified already set in exit_engine.py)."
+  },
+  {
+   "name": "expiry_settlement_rule",
+   "note": "Any position surviving to expiration (missed exit, halt, data gap): ITM >= $0.01 vs the PRIMARY-LISTING official closing price (OCC Rule 805(j) \u2014 implement as the official close/auction print; strikes within ~$0.01 of the close = grading-ambiguous, flag for review) -> credit exact intrinsic on ALL THREE ledgers (exercise has no bid/ask; optional small exercise-friction haircut); ITM < $0.01 or OTM -> $0.00 even if the 16:00-16:15 NBBO shows a bid (that quote prices after-hours contrary-exercise optionality, never use it for settlement). Store the official close per underlying on every touched expiry date \u2014 VALIDATE Tradier's daily close against the primary official close on a sample first (the equivalence is an unverified vendor assumption). Do not credit 16:00-17:30 contrary-exercise optionality (documented deliberate conservative bias, ~0 EV except pin days; FINRA holder cutoff is 17:30 ET \u2014 a ceiling, brokers cut earlier). Tag STRANDED and 'expiry-settled' so lane verdicts at N=25 and exit-rule attribution exclude infrastructure-gap trades; |close-strike| < 0.1% of spot additionally tagged 'pinned' for manual review (no after-hours exercise-decision logic gets built \u2014 long-only accepted risk). If the exit engine actually SOLD in 16:00-16:15 (legal for expiring ETF options), grade the action actually taken \u2014 never mix NBBO sale and settlement intrinsic. Scope: physically-settled equity/ETF options only; cash-settled index options settle under OCC Rule 1804 (AM/SOQ values) \u2014 assert unused."
+  },
+  {
+   "name": "witching_open_bucket",
+   "note": "On 2026-09-18 and 2026-12-18 (AM-settled SPX complex settles on the opening SOQ; component opens can be imbalance-delayed well past 09:35, and SPY is simultaneously ex-div): require the first valid 5-min-boundary confirmation to be >= 09:45 (skip the 09:35 regain-move re-decision), and grade any index_trend signal generated before 09:45 on those two days in a separate 'witching-open' bucket excluded from the lane's N=25 verdict."
+  },
+  {
+   "name": "halt_affected_attribution",
+   "note": "Any forced exit whose trigger time falls inside a halt fills on all three ledgers at the first post-resume two-sided option NBBO (WORST = that bid, even if gapped far through the -50% stop), timestamped at RESUME, never at the rule's trigger time and never at the frozen pre-halt quote. Halt persisting past 15:50/16:00: single-name options get no same-day reopen \u2014 mark at intrinsic vs the close/next-session reopen and grade as 'gap-through'. Halt-affected trades form their own attribution cohort so halt luck does not contaminate signal verdicts. Marks during MWCB windows tagged halt_suspect are excluded from grading AND from every offline paired replay."
+  },
+  {
+   "name": "ev_stop_audit",
+   "note": "Nightly: compare the EV(hold)<EV(sell) optimal-stop's post-14:00 hold/sell calls on 0DTE positions against realized outcomes. A systematic 'hold' bias = the mechanical late-day IV rise (VIX1D business-time/overnight-premium artifact \u2014 Albers-Kestner FRL 2024; note the index rises intraday, the per-option U-shape is the practitioner-documented pattern) leaking into the EV engine; escalate to recalibration of the dte01_iv_dynamics guard."
+  }
+ ],
+ "conflicts": [
+  "post-16:00 window: one MODIFIED guard urged immediate demotion to emergency-close-only graded at the 15:59 NBBO; several CONFIRMED/MODIFIED findings say keep the window, dual-grade, and let the paired 15:58-vs-16:10 replay decide (the widening magnitude is unsourced folklore). Resolved measure-first; the uncontested structural pieces (0DTE force-sell precedence, DTE/product scoping, mark capture to 16:15, dual snapshots) build tonight.",
+  "pinning vs amplification: NPP 2005 / Golez-Jackwerth pinning (single-stock/older futures) vs the 2016-2025 SPY amplification study and Cboe's 0DTE de-minimis measurements. Resolved: no pin-based exits built; pin/OI covariates logged from day 1; the opex conviction block is a registered candidate graded on our own cohorts.",
+  "0DTE decay inflection: practitioner 14:00 figure (unverified, single blog) vs measured ~15:30 collapse (Option Alpha). Resolved: existing 15:00/15:30 force-sell already brackets the measured cliff; the 14:00 theta-cliff exit is registered with an explicitly lowered prior.",
+  "BASE 0.35x for index ETFs: one finding proposed keeping 0.35x for penny-class SPY/QQQ/IWM, but its own primary source (Bryzgalova et al. 2023) shows ETF-option effective/quoted ~0.52, identical to single names. Resolved: dual-report every lane at 0.35x and 0.50x; sign flip = not proven.",
+  "index_trend range gate: the live realized-range-percentile >=50 eligibility gate is oriented opposite the contraction-precursor evidence (Crabel/Raschke), and the original variant draft repeated the wrong sign. Resolved: live gate unchanged; registered candidate with corrected <=50 narrowness / NR7 variants; the unverifiable '60-76% ORB win rate' is stripped from the pre-registration.",
+  "MOC imbalance data: claimed free public field; corrected to paid (NYSE ~$500/mo+, Nasdaq NOII via TotalView) with a venue mismatch (SPY/IWM are Arca-listed, imbalance cancelable to 15:59, so the 15:50 commitment property holds only for QQQ). Resolved: free price-action proxy logged from day 1; feed purchase gated on proxy signal.",
+  "FOMC hold behavior: ipresage (~40% of statement reactions partially/fully reverse by close) vs Option Alpha (FOMC days close on their extremes). Genuinely conflicting \u2014 resolved by pre-registered forks with per-meeting grading, no live change.",
+  "NFP in the macro flag: the lanes' calendar includes NFP but Gao-Han-Li-Zhou never tested NFP (and the paper's 'FOMC' variable is minutes releases at 14:15, not decision days). Resolved: NFP kept as a separately labeled extrapolation stamp, never pooled with the paper's release set.",
+  "sandbox data scope: 'every sandbox endpoint is 15-min delayed' was corrected \u2014 greeks/indices are absent (not delayed) on sandbox and streaming has no sandbox host. Resolved: the freshness guard asserts both timestamp skew and greeks presence.",
+  "half-day SPXW detail: 'SPXW ceases 13:00 on half days' holds only for EXPIRING 0DTE PM-settled contracts; non-expiring SPX/SPXW/XSP trade to 13:15. Irrelevant to current ETF-only lanes; encoded as an assert-unused note in the session calendar."
+ ]
+}

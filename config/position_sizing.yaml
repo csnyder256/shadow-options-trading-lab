@@ -1,0 +1,94 @@
+# position_sizing.yaml - EQUITY-TIERED SIZING + SCALING
+# Read by the Risk Engine. Larger accounts are ALWAYS better protected, never more aggressive.
+# Doc: docs/06_portfolio_scaling.md, docs/03_risk_engine.md
+version: 0.1
+
+# Unified sizing formula (the engine computes this, never the LLM):
+#   units = floor_to_tradable( (equity * per_trade_risk_pct/100) / per_unit_risk )
+#   per_unit_risk:
+#     equities (fractional ok):  entry_price - stop_price
+#     volatility stop:           atr_multiple * ATR(N)
+#     defined-risk options:      (spread_width - net_credit) * 100   # max loss per contract
+#   then CLAMP DOWN to: tier max_position_pct, available settled cash, concentration caps,
+#   confidence size_multiplier, loss-streak multiplier. Size only ever shrinks, never grows.
+
+sizing:
+  default_per_trade_risk_pct: 2.5
+  atr_multiple: 3.5                  # Chandelier-exit ATR multiple (initial stop + trailing distance).
+                                     # Raised 2.5->3.5 (2026-06-21) from the historical sweep: wider
+                                     # stops/trails won OUT-OF-SAMPLE (test exp +0.105R vs +0.090R,
+                                     # PF 1.275 vs 1.236) - letting winners breathe beats cutting the
+                                     # trailing give-back. Risk stays 2.5% (wider stop -> smaller size).
+  floor_to_fractional_shares: true   # fractional shares make small equity positions possible at $250
+
+# Tier ladder. Tier chosen on end-of-day settled equity with hysteresis (see transitions).
+tiers:
+  - name: tier1_experimental
+    equity_min: 0                    # was 250 (2026-07-03): the account sat at $199.99 after a withdrawal,
+                                     # BELOW the lowest band - tier_for_equity() fell back to tiers[0]
+                                     # anyway, so behavior is unchanged; the config now says so truthfully.
+    equity_max: 1000
+    mode: aggressive_experimental
+    max_position_pct: 16             # 2026-07-03 (was 21, before that 33): the 8-slot shape - 8 slots x 16%
+                                     # x 0.75 conf ~ 96% of equity ~ the 95% daily budget (~$48 slots at
+                                     # $400; fractional makes any slot size viable). Worst-case real risk
+                                     # per trade falls to 16% x 8% stop = 1.28% of equity; 8 x 1.28% ~ 10%
+                                     # total worst-case open risk - equal to the old 6-slot shape with 2
+                                     # more independent bets. Keep in sync with risk_limits
+                                     # frequency.max_concurrent_positions: 8.
+    per_trade_risk_pct: 3.5          # was 2.5 -- INERT in tier1 (21% cap x 8% max stop = 1.68% real risk
+                                     # bound); pre-set headroom, see risk_limits per_trade note.
+    options_live: false              # below options_live_min_equity -> paper-only
+    min_one_share: true              # whole-share venues (RH live): rather than REJECT an approved trade
+                                     # when the 2.5% risk budget cannot justify one whole share (the $250
+                                     # granularity wall), take ONE protected share -- iff it still clears
+                                     # the 33%/35% concentration caps + settled cash + the risk cap below.
+                                     # Relaxes only the soft per-trade % budget; live stop + caps +
+                                     # kill-switches untouched. Auto-reverts above tier1 (tiers 2-4 omit
+                                     # this), so >$1k resumes strict whole-share flooring.
+    min_one_share_max_risk_pct: 4.0  # hard ceiling: never force a share risking > 4% of equity (the 33%
+                                     # position cap holds the real worst case near ~2.6%).
+  # 2026-07-03 tier-ladder review (user asked: were these built on stale PDT assumptions?): the ladder
+  # never keyed off PDT's $25k - it is survival scaling ("larger = better protected"), which is a
+  # drawdown-utility CHOICE, not math (growth-optimal Kelly sizing is scale-invariant). Kept, but
+  # tier2 reworked to the budget-model shape (slots x size x 0.75conf ~ 95%) and the dead
+  # min_cash_reserve_pct keys deleted (documented NO-OP; the 5% the daily budget leaves is the reserve).
+  # Tiers 3-4 left as-is deliberately - years away at this equity; re-derive them from live data then.
+  - name: tier2_normal
+    equity_min: 1000
+    equity_max: 5000
+    mode: normal
+    max_position_pct: 12             # 2026-07-03 (was 14): with the global 8-slot cap the concurrent book
+                                     # tops out ~72% of equity (8 x 12% x 0.75 conf) - a DELIBERATE step-
+                                     # down from tier1's ~96% as equity grows; the daily budget can still
+                                     # deploy fully via same-day recycling under BROKER_BP margin bp.
+                                     # Stop-cap-bound real risk 12% x 8% = 0.96%/trade, ~7.7% worst-case
+                                     # open book.
+    per_trade_risk_pct: 1.5
+    options_live: true               # only if equity >= 2000 AND broker supports (see risk_limits.options)
+  - name: tier3_conservative
+    equity_min: 5000
+    equity_max: 10000
+    mode: conservative
+    max_position_pct: 9
+    per_trade_risk_pct: 1.0
+    options_live: true
+  - name: tier4_preservation
+    equity_min: 10000
+    equity_max: null                 # 10k+
+    mode: capital_preservation
+    max_position_pct: 4
+    per_trade_risk_pct: 0.75
+    options_live: true
+
+transitions:
+  evaluate_on: end_of_day_settled_equity
+  tier_promote_consecutive_days: 5   # hysteresis: promote only after N closes above the band
+  tier_demote_immediate: true        # demote immediately on a close below the band
+  reevaluate_intraday: false         # tier is fixed within a session; sizing stays stable intraday
+
+# Optional profit-banking: sweep gains above a high-water mark into a non-traded reserve.
+profit_bank:
+  enabled_from_tier: tier2_normal    # off in tier1 (too small to matter)
+  bank_fraction_of_gains: 0.25       # bank 25% of gains beyond prior high-water mark
+  high_water_mark_basis: settled_equity

@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.local/schemas/analyst_view.schema.json",
+  "title": "AnalystView",
+  "description": "The ONLY thing the Technical Analyst model (GLM-4.7-Flash) is allowed to emit per candidate. Enforced by constrained decoding. It is trade_proposal.schema.json MINUS risk_flags and scores.risk_score: the analyst owns technical/market/news support and the bull/bear/uncertainty argument, but the grammar structurally OMITS the risk fields so the optimistic analyst physically cannot self-clear its own risk. The orchestrator merges this with an AuditorView (Qwen3.6-27B) to assemble the immutable trade_proposal.schema.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "symbol", "setup_type", "bull_case", "bear_case", "uncertainty", "scores", "recommendation"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "0.1" },
+    "symbol": {
+      "type": "string",
+      "description": "Must match a symbol in the resolved universe (universe.yaml).",
+      "pattern": "^[A-Z.]{1,6}$"
+    },
+    "setup_type": {
+      "type": "string",
+      "enum": ["breakout_with_volume", "pullback_to_vwap_uptrend", "pullback_in_uptrend", "range_reversion", "momentum_continuation", "relative_strength_leader"]
+    },
+    "bull_case": { "type": "string", "minLength": 20, "maxLength": 1200, "description": "Strongest honest argument FOR, grounded in the given signals." },
+    "bear_case": { "type": "string", "minLength": 20, "maxLength": 1200, "description": "Strongest honest argument AGAINST, written as if you wanted it rejected." },
+    "uncertainty": { "type": "string", "minLength": 20, "maxLength": 1200, "description": "What would make this wrong? Assumptions, missing/stale data, invalidation conditions." },
+    "scores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["technical", "market", "news"],
+      "properties": {
+        "technical": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "market": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "news": { "type": "integer", "minimum": 0, "maximum": 100, "description": "News/sentiment support, 0-100." }
+      }
+    },
+    "recommendation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action"],
+      "properties": {
+        "action": { "type": "string", "enum": ["enter", "pass"] },
+        "direction": { "type": "string", "enum": ["long", "short"], "description": "Required only when action == enter. (short reserved; long-only in early phases.)" }
+      }
+    },
+    "cited_numbers": {
+      "type": "array",
+      "description": "Optional: indicator values the analyst referenced, echoed back for the orchestrator to re-check against the Signal Engine. A mismatch beyond tolerance rejects the proposal.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "value"],
+        "properties": {
+          "name": { "type": "string" },
+          "value": { "type": "number" }
+        }
+      }
+    },
+    "revisit": {
+      "type": ["object", "null"],
+      "description": "Optional re-look condition, emitted ONLY on a PASS where the setup is structurally sound but the entry is extended. A deterministic queue re-submits the name to this same cascade ONCE if/when the condition is met. Never emit on enter; never to rescue a weak setup. A malformed value is ignored downstream, never fatal.",
+      "additionalProperties": false,
+      "required": ["price", "dir"],
+      "properties": {
+        "price": { "type": "number", "exclusiveMinimum": 0, "description": "The pullback/breakout price at which the name becomes attractive." },
+        "dir": { "type": "string", "enum": ["below", "above"], "description": "The side the live price must reach the level from: 'below' = re-look on a pullback to price; 'above' = re-look on a move up through price." }
+      }
+    }
+  }
+}

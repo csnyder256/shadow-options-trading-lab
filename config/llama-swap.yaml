@@ -1,0 +1,79 @@
+# llama-swap proxy config (mostlygeek/llama-swap). Two groups on the 24GB card:
+#   * "big" - GLM analyst + Qwen auditor, swap:true exclusive:true (one resident at a time, and
+#                loading either EVICTS the scouts group).
+#   * "scouts" - two small extraction LLMs, swap:false exclusive:true (BOTH resident together during
+#                the SCAN state; loading a scout evicts the big group). Active only with `--scout`.
+# Choreography (atlas/app.py SCAN<->ADJUDICATE): scouts run -> a hit pings glm (evicts scouts) ->
+# qwen -> order -> ping a scout (evicts big, reloads BOTH scouts). llama-swap brings up a whole
+# swap:false group when any member is requested, so one ping re-warms both scouts.
+#
+# NOTE (2026-06-22): MTP self-speculation rejected on the auditor (not lossless on Qwen3.6). See memory.
+healthCheckTimeout: 120
+
+models:
+  "glm-4.7-flash":
+    cmd: >
+      C:/llama_cpp/llama-server.exe
+      -m C:/models/glm/GLM-4.7-Flash-Q5_K_M.gguf
+      --port ${PORT} --host 127.0.0.1
+      --n-gpu-layers 999 --ctx-size 24576 --parallel 4 --kv-unified --jinja -fa on
+    ttl: 7200   # was 300 (2026-07-01 audit): discovery gaps > 5min made EVERY evaluation pay a cold ~20GB reload
+
+  "qwen3-30b-a3b-thinking":
+    cmd: >
+      C:/llama_cpp/llama-server.exe
+      -m C:/models/qwen30/Qwen3-30B-A3B-Thinking-2507-UD-Q5_K_XL.gguf
+      --port ${PORT} --host 127.0.0.1
+      --n-gpu-layers 999 --ctx-size 16384 --jinja -fa on
+    ttl: 7200   # was 300 (2026-07-01 audit): discovery gaps > 5min made EVERY evaluation pay a cold ~20GB reload
+
+  # Qwen3.6-27B auditor (quality role). 19.5GB Q5 - same "big"/exclusive swap class as glm/qwen30 on the
+  # 24GB card (cannot be co-resident). MTP self-speculation is deliberately NOT enabled: the mtp/ variant
+  # exists on disk but the 2026-06-22 note above rejected it (not lossless on Qwen3.6), and no comparable-
+  # size entry here uses it - so this matches the plain-GGUF convention of glm-4.7-flash / qwen3-30b.
+  "qwen3.6-27b":
+    cmd: >
+      C:/llama_cpp/llama-server.exe
+      -m C:/models/qwen/Qwen3.6-27B-Q5_K_M.gguf
+      --port ${PORT} --host 127.0.0.1
+      --n-gpu-layers 999 --ctx-size 16384 --jinja -fa on
+    ttl: 7200   # was 300 (2026-07-01 audit): discovery gaps > 5min made EVERY evaluation pay a cold ~20GB reload
+
+  # --- Scouts (real-time pre-screen). Default OFF: lazy-loaded only when --scout requests them. Two
+  # INSTANCES of the benchmarked Qwen2.5-VL-3B (vision), both resident together (scouts group swap:false).
+  # --mmproj is the vision projector (required to read images). Swap -m/--mmproj to change the scout model.
+  "scout-a":
+    cmd: >
+      C:/llama_cpp/llama-server.exe
+      -m C:/models/scout/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf
+      --mmproj C:/models/scout/mmproj-Qwen2.5-VL-3B-Instruct-f16.gguf
+      --port ${PORT} --host 127.0.0.1
+      --n-gpu-layers 999 --ctx-size 8192 --parallel 2
+    ttl: 7200   # was 300 (2026-07-01 audit): discovery gaps > 5min made EVERY evaluation pay a cold ~20GB reload
+
+  "scout-b":
+    cmd: >
+      C:/llama_cpp/llama-server.exe
+      -m C:/models/scout/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf
+      --mmproj C:/models/scout/mmproj-Qwen2.5-VL-3B-Instruct-f16.gguf
+      --port ${PORT} --host 127.0.0.1
+      --n-gpu-layers 999 --ctx-size 8192 --parallel 2
+    ttl: 7200   # was 300 (2026-07-01 audit): discovery gaps > 5min made EVERY evaluation pay a cold ~20GB reload
+
+groups:
+  # Heavyweights: exactly one resident; loading either evicts the scouts (exclusive).
+  "big":
+    swap: true
+    exclusive: true
+    members:
+      - "glm-4.7-flash"
+      - "qwen3-30b-a3b-thinking"
+      - "qwen3.6-27b"
+  # Scouts: both resident together (swap:false); loading a scout evicts the big group (exclusive),
+  # so re-warming the scouts after the cascade frees the GPU of GLM/Qwen automatically.
+  "scouts":
+    swap: false
+    exclusive: true
+    members:
+      - "scout-a"
+      - "scout-b"

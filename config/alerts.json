@@ -1,0 +1,35 @@
+{
+    "_README":  "Config for scripts/alert_watch.py (the read-only model-server stall alerter). JSON (not YAML) on purpose: the alerter is stdlib-only so it can never die on a missing dependency. After editing, verify with:  .venv\\Scripts\\python.exe scripts\\alert_watch.py --test",
+    "enabled":  true,
+    "poll_interval_sec":  5,
+    "trigger":  {
+                    "_note":  "Suspected-server-down only. Fires if EITHER condition holds; one alert per outage. recent_stall_window_sec: a stall counts only if its latest cycle is within this many seconds (ignores hours-old stalls in today\u0027s journal at startup).",
+                    "consecutive_timeout_cycles":  2,
+                    "recent_stall_window_sec":  600,
+                    "health_probe_fails":  3,
+                    "health_probe_interval_sec":  20,
+                    "startup_grace_sec":  180,
+                    "market_hours_only":  true,
+                    "market_open_local":  "08:30",
+                    "market_close_local":  "15:20",
+                    "halt_alerts":  true,
+                    "app_log_silent_min":  10
+                },
+    "ntfy":  {
+                 "_note":  "Phone push. 1) Install the \u0027ntfy\u0027 app (Android/iOS) or open https://ntfy.sh. 2) Subscribe to the EXACT topic string below. 3) Anyone who knows the topic can read/post, so make it long + unguessable. Then test with --test.",
+                 "enabled":  true,
+                 "base_url":  "https://ntfy.sh",
+                 "topic":  "atlas-stall-CHANGE-ME-TO-A-LONG-RANDOM-STRING"
+             },
+    "email":  {
+                  "_note":  "Email alert. ntfy.sh\u0027s FREE tier REJECTS anonymous email (HTTP 400 \u0027anonymous email sending is not allowed\u0027), so via_ntfy is OFF and email uses direct Gmail SMTP (fill in the placeholder addresses below). YOUR ONLY STEP to enable email: (1) enable 2-Step Verification on your own sending Gmail account, (2) create an App Password (Google Account \u003e Security \u003e App passwords), (3) run  setx ATLAS_ALERT_SMTP_PASS \"\u003c16-char app password\u003e\"  in a new terminal, then relaunch. Until then, ntfy phone push is the active channel (email just skips, gracefully).",
+                  "enabled":  true,
+                  "to":  "you@example.com",
+                  "via_ntfy":  false,
+                  "smtp_host":  "smtp.gmail.com",
+                  "smtp_port":  587,
+                  "smtp_user":  "you@example.com",
+                  "from":  "you@example.com",
+                  "smtp_pass_env":  "ATLAS_ALERT_SMTP_PASS"
+              }
+}

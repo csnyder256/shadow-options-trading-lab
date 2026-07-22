@@ -1,0 +1,7 @@
+// Canary golden set (docs/09). Each line is a frozen candidate + the expected behavior band.
+// Bands are SANITY ranges that detect model drift; recalibrate (tighten) from a known-good
+// baseline run via scripts/run_canary.py before pinning fingerprints. A changed model build
+// whose outputs fall outside these bands fails the canary and blocks the deploy.
+{"name":"clean_breakout","symbol":"NVDA","setup_type":"breakout_with_volume","signals":{"rsi_14":61.2,"adx_14":28.0,"atr_14":2.1,"vwap":96.4,"vol_zscore":3.0,"last_close":100.0,"recent_high":98.0},"technical_band":[40,100],"risk_score_band":[0,75],"expect_action":null}
+{"name":"gap_extended_breakout","symbol":"NVDA","setup_type":"breakout_with_volume","signals":{"rsi_14":72.0,"adx_14":31.0,"atr_14":4.2,"vol_zscore":3.4,"gap_pct":2.3,"last_close":120.0,"recent_high":118.0},"technical_band":[0,100],"risk_score_band":[30,100],"expect_action":null}
+{"name":"weak_chop_reversion","symbol":"AAPL","setup_type":"range_reversion","signals":{"rsi_14":48.0,"adx_14":12.0,"atr_14":1.0,"vwap":100.0,"vol_zscore":0.3,"last_close":100.0},"technical_band":[0,80],"risk_score_band":[0,100],"expect_action":null}

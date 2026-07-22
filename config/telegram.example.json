@@ -1,0 +1,6 @@
+{
+  "_README": "Telegram failsafe bot (scripts/telegram_bot.py). SETUP: 1) copy this file to config/telegram.local.json (that name is gitignored, so your token stays private). 2) paste the token BotFather gave you into 'bot_token'. 3) start the bot (py -3 scripts/telegram_bot.py), open Telegram, send it any message; it replies with YOUR numeric chat_id. 4) put that number in 'chat_id' and restart. Only that one chat can command the bot. Alternatively set env vars ATLAS_TELEGRAM_BOT_TOKEN / ATLAS_TELEGRAM_CHAT_ID (they override this file). Verify the token any time with: py -3 scripts/telegram_bot.py --selftest",
+  "enabled": true,
+  "bot_token": "PASTE_YOUR_BOT_TOKEN_HERE",
+  "chat_id": "YOUR_CHAT_ID"
+}

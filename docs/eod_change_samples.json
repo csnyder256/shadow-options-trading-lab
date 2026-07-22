@@ -1,0 +1,48 @@
+{
+  "anti_peak_guard": {
+    "created": null,
+    "samples": [],
+    "threshold": 25
+  },
+  "climax_gap_guard": {
+    "created": "2026-07-06",
+    "samples": [
+      {
+        "cohort": "blocked",
+        "date": "2026-07-06",
+        "outcome_pct": -3.64,
+        "symbol": "GEO"
+      },
+      {
+        "cohort": "blocked",
+        "date": "2026-07-07",
+        "outcome_pct": 7.39,
+        "symbol": "BEAM"
+      },
+      {
+        "cohort": "blocked",
+        "date": "2026-07-08",
+        "outcome_pct": -1.6,
+        "symbol": "BZH"
+      }
+    ],
+    "threshold": 25
+  },
+  "climax_reversal_guard": {
+    "created": "2026-07-06",
+    "samples": [
+      {
+        "cohort": "blocked",
+        "date": "2026-07-06",
+        "outcome_pct": -3.64,
+        "symbol": "GEO"
+      }
+    ],
+    "threshold": 25
+  },
+  "take_reversion_winners": {
+    "created": null,
+    "samples": [],
+    "threshold": 25
+  }
+}

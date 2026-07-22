@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.local/schemas/decision_journal.schema.json",
+  "title": "DecisionJournalRecord",
+  "description": "One append-only record per decision (including rejections / non-trades). This is the system's durable long-term memory AND its complete audit trail. Records are never edited in place; outcomes are added by appending an amendment event keyed by decision_id (event-sourcing style). Active-trade records are never compressed. Closed records may be summarized into lessons, but the raw journal is retained forever. Each record carries seq + prev_hash to form a tamper-evident hash chain; a break -> DISABLED_REVIEW. Doc: docs/05 Layer 2.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["seq", "prev_hash", "decision_id", "ts", "event_type", "symbol"],
+  "properties": {
+    "seq": { "type": "integer", "minimum": 0, "description": "Monotonic sequence number. A gap -> DISABLED_REVIEW." },
+    "prev_hash": { "type": "string", "description": "Hash of the previous record (hash chain)." },
+    "decision_id": { "type": "string", "description": "Stable id linking a decision to its later outcome amendment." },
+    "ts": { "type": "string", "format": "date-time" },
+    "event_type": { "type": "string", "enum": ["proposal", "rejected_proposal", "order_submitted", "fill", "exit", "outcome_amendment", "reflection", "external_observed", "halt", "regime_change", "revisit_set", "revisit_triggered", "guardian_ack", "equity_flow", "state_overridden", "catalyst_event", "catalyst_triggered"], "description": "What kind of event this record is. (2026-07-03: backfilled guardian_ack/equity_flow/state_overridden - journal.py accepted them but this schema lagged; added catalyst_event/catalyst_triggered for the catalyst pipeline.)" },
+    "detail": { "type": "string", "description": "Free-text summary for portfolio-level events (halt, regime_change, revisit_set, revisit_triggered)." },
+    "symbol": { "type": "string" },
+    "setup_type": { "type": "string" },
+    "cycle_inputs": {
+      "type": "object",
+      "description": "Snapshot of the deterministic inputs for full reproducibility / replay.",
+      "properties": {
+        "signals": { "type": "object", "description": "The exact Signal Engine feature record." },
+        "core_memory_digest": { "type": "string", "description": "Hash/summary of the Core Memory Block shown to the model." },
+        "retrieved_memory_ids": { "type": "array", "items": { "type": "string" } },
+        "model_version": {
+          "type": "object",
+          "description": "Both model fingerprints for full reproducibility (the decision spans two models).",
+          "properties": {
+            "analyst": { "type": "string", "description": "e.g. GLM-4.7-Flash#<sha>" },
+            "auditor": { "type": "string", "description": "e.g. Qwen3.6-27B#<sha>" }
+          }
+        }
+      }
+    },
+    "llm_proposal": { "type": "object", "description": "The validated TradeProposal (trade_proposal.schema.json), if event_type == proposal/rejected_proposal." },
+    "consensus": {
+      "type": "object",
+      "properties": {
+        "support": { "type": "number" },
+        "risk_factor": { "type": "number" },
+        "confidence": { "type": "number" },
+        "calibration_discount_applied": { "type": "number" }
+      }
+    },
+    "risk_decision": {
+      "type": "object",
+      "properties": {
+        "approved": { "type": "boolean" },
+        "reject_reason": { "type": "string", "description": "Named reason if rejected (e.g. earnings_blackout, granularity_wall, concentration, low_confidence)." },
+        "sized_units": { "type": "number", "description": "Computed by the Risk Engine, never by the LLM." },
+        "entry_limit": { "type": "number" },
+        "hard_stop": { "type": "number" },
+        "take_profit": { "type": "number" },
+        "client_order_id": { "type": "string", "description": "Idempotency key, generated and journaled BEFORE the send." }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "description": "Added later via an outcome_amendment event when the trade closes.",
+      "properties": {
+        "realized_return_pct": { "type": "number" },
+        "realized_return_vs_spy_pct": { "type": "number", "description": "Alpha vs benchmark, TradingAgents-style." },
+        "exit_reason": { "type": "string", "enum": ["stop", "target", "time_stop", "manual", "rule_exit"] },
+        "holding_sessions": { "type": "integer" }
+      }
+    },
+    "reflection": {
+      "type": "object",
+      "description": "Reflexion-style written lesson, added on close. Keyed by symbol + setup_type. Importance is assigned here for retrieval scoring.",
+      "properties": {
+        "text": { "type": "string" },
+        "importance": { "type": "number", "minimum": 0, "maximum": 1, "description": "Write-time importance (a blown thesis / hit stop scores high; a routine win low)." },
+        "tags": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

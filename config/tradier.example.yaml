@@ -1,0 +1,12 @@
+# Copy to config/tradier.local.yaml (gitignored) and paste your own token.
+# Also copy to config/tradier_shadow.local.yaml if you want the strategy lab to run
+# on a separate token/rate budget from the main options shadow.
+#
+# Consumer: atlas/collect/tradier_data.py -> TradierData.from_local_config()
+# Absent or tokenless -> from_local_config() returns None and the caller degrades
+# to an empty feed. Tradier is the only real-time quote/chain provider.
+
+token: "your-tradier-api-token-here"   # REQUIRED for a live data run; never commit a real one
+env: production                        # production | sandbox
+timeout_seconds: 5.0
+max_per_minute: 60                     # client-side rate cap; the lab slices its own budget

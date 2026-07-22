@@ -1,0 +1,39 @@
+# consensus.yaml - DETERMINISTIC CONSENSUS SCORING + CONFIDENCE-DRIFT GUARDS
+# Read by the Consensus Layer (code). Structure is fixed; weights are calibration parameters
+# set during backtesting. Doc: docs/05_memory_and_rotating_analyst.md (Part B)
+version: 0.1
+
+# Formula (fixed structure):
+#   support     = w_tech*technical + w_market*market + w_news*news     (weights sum to 1)
+#   risk_factor = 1 - (risk_weight * risk_score/100)                   (risk only ever discounts)
+#   confidence  = clamp(support * risk_factor, 0, 100)
+#   HARD VETO:  if risk_score >= risk_veto_threshold -> REJECT (no trade, regardless of support)
+weights:
+  w_tech: 0.50
+  w_market: 0.30
+  w_news: 0.20
+  risk_weight: 0.50                 # was 0.70 - retuned 2026-07-01 from the full-platform audit.
+  # 0.70 was the docs/05 worked-example number, never calibrated. Against the OBSERVED live
+  # distributions (auditor risk modal 40-42, never <20 in 88 recorded audits; analyst support
+  # median 71.5, max 84.5) a 0.70 weight demands support >=79 at risk 40 => 2/34 lifetime
+  # proposals passed the 57 floor and 4 live days produced 1 trade. On the same forensic ledger
+  # the 06-23 floor-57 retune used, w=0.5 yields 35 trades / +12.29 sumR vs 21 / +11.70 at 0.7 - 
+  # more trades AND more total R. The hard risk>=60 veto (below) is UNCHANGED and stays the
+  # absolute safety gate; risk still only ever DISCOUNTS (never adds) confidence.
+  risk_veto_threshold: 60           # risk_score at/above this is an absolute veto
+
+# Anti-confidence-inflation guards (the named requirement). All deterministic.
+confidence_drift_guards:
+  never_carry_forward: true         # confidence recomputed from scratch each cycle
+  external_recalibration: true      # discount confidence by realized-vs-stated hit-rate
+  calibration_lookback_trades: 20   # per setup_type
+  calibration_discount_max: 0.30    # cap the discount so one bad streak doesn't zero everything
+  anonymize_arguments_for_judge: true  # strip "who said what" before any judge step
+  risk_is_subtractive_only: true    # optimism can never overpower an elevated risk score
+
+# How the calibration discount is applied:
+#   if stated_confidence_avg(setup_type) - realized_winrate(setup_type) > drift_tolerance:
+#       discount = min(calibration_discount_max, (gap/100))
+#       confidence *= (1 - discount)
+calibration:
+  drift_tolerance_pct: 15           # stated running >15 pts above realized -> apply discount

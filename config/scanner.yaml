@@ -1,0 +1,138 @@
+# Scanner-driven candidate discovery (architecture pivot, 2026-06-24). The Robinhood real-time
+# server-side SCANNER is the FINDER (run_scan; our filters; results "evaluated against current market
+# data at request time"). 3 STAGGERED STRICT scans partition the long-momentum signal on orthogonal
+# axes (RSI band / gap / RVOL direction) so they surface DIFFERENT names with minimal overlap. Every
+# threshold is cited to an established system (O'Neil/CANSLIM, Qullamaggie EP, Minervini, Cardwell
+# bull-range RSI, Wilder ADX) and survived adversarial verification (workflow wffdu0n3q).
+#
+# Filters validated LIVE on the account. NOTES: technical indicators REQUIRE interval "1d" (ADX without
+# it errors); ADX/RSI also take length 14; predicates are SYMBOLS. AVERAGE_VOLUME/VOLUME are backend-
+# buggy (candleCount=0) -> liquidity is client-side. PERCENT_CHANGE_FROM_CLOSE filter + EARNINGS_DATE
+# are enforced CLIENT-SIDE. See memory rh-scanner-realtime-2026-06-24.
+version: 0.1
+enabled_default: false            # the --scanner flag arms it; default OFF so the existing path is unchanged
+
+# >>> FRACTIONAL / WHOLE-MARKET NOTE <<<
+# The `filters` below are REFERENCE ONLY - the scanner runs each saved scan by `id` (run_scan); the LIVE
+# filters live SERVER-SIDE in the Robinhood saved scan. Editing the price band here does NOT change what RH
+# scans. To open the whole market for FRACTIONAL trading you MUST widen/remove the FILTER_TYPE_LAST band (the
+# `["5","100"]` lines) in the SERVER-SIDE saved scans A/B/C - via the RH MCP `update_scan_filters` tool or the
+# Robinhood app. Do this WHEN you flip fractional_enabled on (config/robinhood.local.yaml); narrow it back for
+# whole-share days (else the scanner surfaces >$100 names the risk engine then rejects = wasted cascade). The
+# CLIENT-SIDE band (signal_params.yaml max_entry_price) is auto-widened when fractional is armed (app.py).
+
+poll:
+  cadence_seconds: 25             # 20-30s: matches the ~2.5 candidate/min cascade; far under the ~15-burst rate cap
+  rotate: true                    # one scan per tick, round-robin A -> B -> C -> D
+  per_scan_cap: 40                # keep at most top-N per scan (dollar-vol sorted) so a loose scan (C) never floods
+  # MORNING variants (2026-07-01 audit): RH "Relative volume" is CUMULATIVE-day vs a 30d full-day
+  # average, so a 1.3-1.8 floor is unreachable until a name has traded most of an average day - 
+  # the funnel returned literally 0 rows 9:30-10:00 and ramped 50-170x into 15:00, making ATLAS an
+  # afternoon-only machine. Before this ET time the poller swaps each scan's id for its morning_id,
+  # whose RVOL bands are pace-scaled by the ~22% of daily volume typically traded by mid-morning
+  # (A 1.3->0.45, B 1.8->0.60, C 0.6-1.1 -> 0.10-0.30). Same RSI/ADX/cap/price filters; same
+  # client-side gates; discovery separately converts cumulative RVOL to a PACE estimate for scoring.
+  morning_until_et: "11:00"
+
+scans:
+  - key: A
+    id: 00000000-0000-4000-8000-00000000000a
+    morning_id: 00000000-0000-4000-8000-00000000000b   # ATLAS-A-am-continuation (RVOL>=0.45)
+    title: ATLAS-A-continuation
+    setup_type: momentum_continuation
+    filters:
+      - {filter_type: FILTER_TYPE_LAST, predicate: ">=", values: ["5"], interval: "1d"}   # PRICE BAND: $5 floor, NO ceiling (server scan widened 2026-06-28 for fractional). Reference only - see top note
+      - {filter_type: FILTER_TYPE_AVERAGE_DIRECTIONAL_INDEX, predicate: ">=", values: ["22"], interval: "1d", length: 14}   # 2026-06-26 LIVE loosen 25->22 (a little more continuation recall on active days; quiet days still thin = market-driven)
+      - {filter_type: FILTER_TYPE_RSI, predicate: BETWEEN, values: ["50", "80"], interval: "1d", length: 14}
+      - {filter_type: FILTER_TYPE_RELATIVE_VOLUME, predicate: ">=", values: ["1.3"], interval: "1d"}   # 2026-06-26 LIVE loosen 1.5->1.3
+      - {filter_type: FILTER_TYPE_MARKET_CAP, predicate: ">=", values: ["2000000000"]}   # 2026-06-25 LIVE: $2B liquidity proxy; cuts the micro-cap flood (AVERAGE_VOLUME/VOLUME are backend-buggy). The $20M client median-dv gate is the real backstop.
+    client_side:
+      percent_change_from_close: [0, 5]   # buggy as a server filter -> applied to the % Change output column
+
+  - key: B
+    id: 00000000-0000-4000-8000-00000000000c
+    morning_id: 00000000-0000-4000-8000-00000000000d   # ATLAS-B-am-breakout (RVOL>=0.60)
+    title: ATLAS-B-breakout
+    setup_type: breakout_with_volume
+    # 2026-06-29 REDESIGN: the GAP filter was REMOVED. A "gap" is the open-vs-prior-close jump; requiring it
+    # meant B only fired on overnight gappers and returned 0 even on explosively-green grind-up days (verified
+    # live 3 days running, incl. a wide-open gap 1-12 = 0). Research (O'Neil pivot / Minervini VCP / Darvas)
+    # defines a breakout as price CLEARING A PRIOR HIGH on expanding volume - a gap is one flavor, not the
+    # definition. So the server scan now finds volume-surge strength (RVOL + RSI), and the BREAKOUT SHAPE
+    # (price at/through a fresh 20-day high) is confirmed CLIENT-SIDE in context.py (breakout_floor_pct +
+    # the existing don't-chase ceiling => entry band [pivot-3%, pivot+cap]). NO ADX filter on purpose: the
+    # best breakouts come from low-volatility bases where ADX is still LOW and only rises after the break.
+    filters:
+      - {filter_type: FILTER_TYPE_LAST, predicate: ">=", values: ["5"], interval: "1d"}   # PRICE BAND: $5 floor, NO ceiling (server scan widened 2026-06-28 for fractional). Reference only - see top note
+      - {filter_type: FILTER_TYPE_RELATIVE_VOLUME, predicate: ">=", values: ["1.8"], interval: "1d"}   # volume surge = the breakout's confirmation (2026-06-26 loosen 2.0->1.8)
+      - {filter_type: FILTER_TYPE_RSI, predicate: BETWEEN, values: ["50", "80"], interval: "1d", length: 14}   # in strength, not exhausted
+      - {filter_type: FILTER_TYPE_MARKET_CAP, predicate: ">=", values: ["2000000000"]}   # 2026-06-25 LIVE: $2B liquidity proxy (see scan A note)
+    client_side:
+      percent_change_from_close: [1, 12]   # 2026-06-30: B was direction-BLIND (it surfaced BTI tagged "breakout"
+      # while -1.6% on the day). A breakout is an UP day; require the live % change UP (>=1%) but not exhausted
+      # (<=12%, beyond which it's a chase). A/C already band this; B lacked it. Pairs with the context.py
+      # same-bar range_pos/green gate (one uses the real-time tape, the other the bar shape).
+
+  - key: C
+    id: 00000000-0000-4000-8000-00000000000e
+    morning_id: 00000000-0000-4000-8000-00000000000f   # ATLAS-C-am-pullback (RVOL 0.10-0.30)
+    title: ATLAS-C-pullback
+    setup_type: pullback_in_uptrend
+    filters:
+      - {filter_type: FILTER_TYPE_LAST, predicate: ">=", values: ["5"], interval: "1d"}   # PRICE BAND: $5 floor, NO ceiling (server scan widened 2026-06-28 for fractional). Reference only - see top note
+      - {filter_type: FILTER_TYPE_AVERAGE_DIRECTIONAL_INDEX, predicate: ">=", values: ["25"], interval: "1d", length: 14}   # 2026-06-30 TIGHTEN 20->25: C FLOODED 143 uniques (vs A12/B21); median ADX was 22.4 (11/12 <25) so 20 was a modal no-op. >=25 = a real directional trend the dip sits within (Wilder).
+      - {filter_type: FILTER_TYPE_RSI, predicate: BETWEEN, values: ["40", "60"], interval: "1d", length: 14}
+      - {filter_type: FILTER_TYPE_RELATIVE_VOLUME, predicate: BETWEEN, values: ["0.6", "1.1"], interval: "1d"}   # 2026-06-30 TIGHTEN 0.7-1.3->0.6-1.1: a real pullback is LIGHT volume (selling drying up); >1.1 is participation, not a dip. Narrows the flood.
+      - {filter_type: FILTER_TYPE_MARKET_CAP, predicate: ">=", values: ["2000000000"]}   # 2026-06-25 LIVE: $2B liquidity proxy (see scan A note)
+    client_side:
+      percent_change_from_close: [-4, 1]
+
+  - key: D
+    id: 00000000-0000-4000-8000-000000000010
+    morning_id: 00000000-0000-4000-8000-000000000011   # ATLAS-D-am-inplay (RVOL>=1.5, pace-scaled)
+    title: ATLAS-D-inplay
+    setup_type: breakout_with_volume
+    # 2026-07-03 "IN-PLAY" scan (research round 1, finding #10 - the one intraday result that survived
+    # 3-vote verification): per-trade expectancy rises steeply with EXTREME relative volume (+0.38R
+    # above 30x vs -0.02R below 1x), but the A/B RSI 50-80 bands exclude the most extreme movers
+    # (RSI>80 monsters) and the $2B cap floor excludes in-play MID-caps - where limits-to-arbitrage
+    # says residual edge concentrates. D has NO RSI/ADX server bands on purpose: the shape burden is
+    # client-side - it takes the FULL B breakout gauntlet in context.py (don't-chase cap, at-the-pivot
+    # floor, same-bar thrust) plus every hard gate (SMA200, TSMOM, dollar-vol floor, earnings, spread),
+    # and the %chg ceiling below guards exhaustion. Expect FEW survivors; that's the design.
+    filters:
+      - {filter_type: FILTER_TYPE_LAST, predicate: ">=", values: ["5"], interval: "1d"}   # reference only - live filters are server-side
+      - {filter_type: FILTER_TYPE_RELATIVE_VOLUME, predicate: ">=", values: ["5"], interval: "1d"}   # extreme cumulative RVOL = genuinely in play
+      - {filter_type: FILTER_TYPE_MARKET_CAP, predicate: ">=", values: ["500000000"]}   # $500M floor (vs $2B on A/B/C): admit in-play mid-caps; the $5M median-dollar-vol client gate + 50bps spread gate are the real liquidity backstops
+    client_side:
+      percent_change_from_close: [1, 25]   # up on the day (it's a breakout) but not a >25% parabolic chase
+
+# CLIENT-SIDE context + ranking (enforced by the SignalEngine + queue organizer on the few survivors,
+# delayed daily bars OK): price>SMA200 hard gate (NaN-safe fail-open), full Minervini stack (soft),
+# 52wk-high proximity >=0.75, 12-1 cross-sectional RS percentile (PRIMARY momentum key), absolute
+# 12mo-return>0 TSMOM gate, 20d-median dollar-vol $20M floor, don't-chase entry cap (not for C),
+# leveraged/inverse exclusion, earnings FAIL-CLOSED (Finnhub). Ranking = lexicographic survival-first.
+
+# --- CLIENT-SIDE context params (atlas/scan/context.py -> ContextParams.from_raw). Only keys set here
+# override defaults; the block is optional (omit = byte-identical). The post-GEO CLIMAX GUARD (2026-07-06)
+# is DEFAULT-OFF. Arm ONE rule at a time and ONLY after a shadow/backtest of the blocked-cohort expectancy
+# (this codebase has a history of curve-fit gates failing OOS). See the sr-52wk-guard-panel synthesis (3
+# independent expert lenses) + memory. Momentum/breakout (scans A/B/D) only; never the C pullback.
+context:
+  # rule1 (panel's ARM-FIRST pick): veto a momentum/breakout buy made >= climax_reversal_pct% BELOW a
+  # FRESH 52wk high that reversed intraday (GEO's 30.98 buy, 3.94% under its 9:30 32.25 spike). Closes the
+  # chase cap's direction-blind bypass (the cap only blocks ABOVE the pivot) -> a structural fix, not a new gate.
+  climax_reversal_guard: true    # ARMED 2026-07-06 (user) after the GEO climax cut. Rule2 stays shadow/off.
+  climax_reversal_pct: 3.0
+  # rule2 (SHADOW-FIRST): veto a gap >= climax_gap_pct straight into a fresh 52wk high (GEO gapped +6.1%).
+  # The +3% threshold is n=1-eyeballed -> keep OFF until a backtest shows an acceptable winner-kill rate.
+  climax_gap_guard: false
+  climax_gap_pct: 3.0
+  # --- Anti-peak extension veto (2026-07-07, buy-low rebuild M3). SHADOWED 2026-07-08 (owner) pending N=25.
+  # WAS armed on n=7; the 2026-07-08 refute found it fires on setup_key A/B/D - and A = relative_strength_leader
+  # = the VALIDATED, LIVE rs_sleeve (+0.231R OOS), whose whole edge is buying extended RS LEADERS. So an armed
+  # anti_peak_guard VETOES the one proven edge. Turned OFF (shadow): /eodreport recomputes its would-block
+  # cohort each day to accumulate the N=25 affected-trade sample (blocked-vs-kept expectancy) before any
+  # re-arm - and a re-arm must SCOPE it to breakouts (B/D) only, never the rs_sleeve (A). Do NOT re-arm on A.
+  anti_peak_guard: false
+  anti_peak_extension_atr: 1.5

@@ -1,0 +1,45 @@
+# Scout stage - real-time pre-screen config. Active ONLY when atlas is run with `--scout` (default off,
+# so the existing live path is unchanged). Serving (model/gguf/instances) is in models.yaml roles.scout
+# + config/llama-swap.yaml; this file holds the BEHAVIOR. See .claude/plans/harmonic-moseying-bumblebee.md.
+version: 0.1
+modality: vision                # mirror of models.yaml roles.scout.modality (text | vision)
+
+vision:                         # used only when modality: vision (scout VLM reads a chart/quote IMAGE)
+  source: screenshot            # screenshot (Playwright render of the quote page -> reads EXACT price text;
+                                # benchmarked 100% @ ~0.6s/read). chart_image = static PNG, faster fetch but a
+                                # bare chart rarely shows the exact price. The two scouts render in PARALLEL.
+  screenshot_url: "https://finance.yahoo.com/quote/{symbol}"
+  viewport: [1100, 850]         # render size (px)
+  clip: [0, 0, 1100, 620]       # crop to the quote header (price + key stats) -> small image, fast VLM read
+  chart_url: "https://charts2.finviz.com/chart.ashx?t={symbol}&ty=c&ta=1&p=d"
+
+# Reject a scout pass if its price diverges more than this % from the genuinely-real-time RH quote.
+# This is the digit-misread / stale-read backstop; the order is ALSO re-priced on the RH quote at send.
+cross_check_tol_pct: 2.0
+
+gate:                           # ScoutGateParams - the deterministic numbers gate
+  price_band:
+    min_entry_price: 5.0
+    max_entry_price: 100.0
+  misread_band_pct: 35.0        # |live - daily-snapshot| beyond this % == implausible -> treat as misread
+  max_drift_pct: 8.0            # within plausibility, already moved this far from the setup -> don't chase
+  min_volume: null              # optional intraday share-volume floor (null = disabled)
+  require_symbol_match: true    # the read's reported ticker must equal the requested one
+
+live_sources:                   # SourceRegistry - resilient fetch
+  cache_ttl_seconds: 5.0        # reuse a fetched reading for this long (real-time-ish, anti-hammer)
+  min_interval_seconds: 1.0     # per-source pacing (anti rate-limit)
+  backoff_base: 2.0
+  backoff_max_seconds: 60.0
+  sources:
+    - type: yahoo               # Yahoo query1 chart JSON (compact; meta block at the head)
+
+client:                         # HttpScoutClient
+  timeout_seconds: 30.0
+  max_chars: 12000              # cap on the text payload handed to the scout LLM
+  max_tokens: 512
+
+loop:
+  idle_seconds: 10              # --scout continuous driver: wait this long only when a cycle did no GPU
+                                # work (out-of-session / empty pool); otherwise loop with no sleep.
+

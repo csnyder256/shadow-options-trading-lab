@@ -1,0 +1,70 @@
+# Intraday backtest universe (2026-07-08 pivot) - LIQUID, VOLATILE, fractional-friendly names with 2+ years
+# of history, the kind that actually produce intraday dip-and-pop moves. NOT the S&P large-cap curated list
+# (those are the non-volatile names the owner wants us to STOP buying). Volatility (intraday ATR%) matters more
+# than price here; fractional shares make even $200+ names affordable on the $400 account.
+# This is a research universe for the go/no-go backtest; the design panel's universe FILTER (min intraday
+# ATR% / max spread / liquidity) is applied on top at backtest time. Survivorship: these are current names
+# (a delisted-name pass is a later refinement - noted, not silently ignored).
+intraday_symbols:
+  # high-beta tech / momentum
+  - TSLA
+  - NVDA
+  - AMD
+  - PLTR
+  - SMCI
+  - MU
+  - MRVL
+  - "ON"          # QUOTED: YAML parses bare ON/OFF/YES/NO as booleans (onsemi ticker)
+  - NET
+  - DDOG
+  - CRWD
+  - U
+  - PATH
+  - UPST
+  - ROKU
+  - SNAP
+  - SHOP
+  - RBLX
+  - CVNA
+  - TTD
+  - PINS
+  - DASH
+  - ABNB
+  # fintech / crypto-adjacent (volatile)
+  - SOFI
+  - AFRM
+  - COIN
+  - HOOD
+  - PYPL
+  - MARA
+  - RIOT
+  # EV / clean-energy (high intraday range)
+  - RIVN
+  - LCID
+  - NIO
+  - XPEV
+  - LI
+  - PLUG
+  - FCEL
+  - CHPT
+  - RUN
+  - ENPH
+  - FSLR
+  # meme / retail-driven
+  - GME
+  - AMC
+  - BB
+  # biotech movers
+  - MRNA
+  - NVAX
+  # liquid + cheaper (fractional / small-account friendly, still move)
+  - F
+  - BAC
+  - INTC
+  - NIO
+  - LYFT
+  - WBD
+  - CHWY
+  - ETSY
+  - DKNG
+  - BABA

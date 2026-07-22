@@ -1,0 +1,27 @@
+{
+  "generated_at": "2026-06-19T13:45:00Z",
+  "trading_state": "ACTIVE",
+  "tier": "tier1_experimental",
+  "account": {
+    "equity": 250.0,
+    "settled_cash": 250.0,
+    "unsettled_cash": 0.0,
+    "cash_reserve_pct": 100.0
+  },
+  "risk_budget_today": {
+    "trades_used": 0,
+    "daily_drawdown_used_pct": 0.0,
+    "consecutive_losses": 0,
+    "size_multiplier_active": 1.0,
+    "deployed_today_usd": 0.0,
+    "deployment_budget_usd": null,
+    "budget_remaining_usd": null
+  },
+  "open_positions": [],
+  "recent_lessons": [
+    "System is in Phase 0/1 (no live capital). Options are PAPER-ONLY below $2,000 equity.",
+    "Equities with fractional shares are the only live-sizable vehicle at $250.",
+    "Passing on a marginal setup is always a correct, unpenalized choice."
+  ],
+  "do_not_repeat_flags": []
+}
