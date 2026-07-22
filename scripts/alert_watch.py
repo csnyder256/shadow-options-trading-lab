@@ -4,7 +4,7 @@
 WHY: on 2026-06-25 the local analyst (GLM via llama-swap) stalled in the last ~25 min of the session and
 every cascade attempt timed out, silently. Trades are fail-closed (a timeout -> skip -> no position -> no
 risk), so capital was never in danger -- but the failure was INVISIBLE until reviewed after the close.
-This watcher makes a *suspected server-down* condition LOUD so the user can pull Claude in immediately.
+This watcher makes a *suspected server-down* condition LOUD so the operator can intervene immediately.
 
 WHAT (deliberately mirrors the hub/babysitter philosophy):
   * separate process, stdlib-only, NO `atlas` import, NO GPU, NO Robinhood calls.
@@ -292,7 +292,7 @@ def build_incident_text(reason: str, recs: list[dict], trail: dict) -> str:
         _journal_error_rows(recs),
         "",
         "NOTE: trades are fail-closed on a stall (skip -> no position -> no risk); capital is safe. This is a",
-        "reliability alert. Hand this file to Claude and verify against broker truth before acting.",
+        "reliability alert. Review this file and verify against broker truth before acting.",
         "========================================================================",
     ])
 
@@ -591,7 +591,7 @@ def evaluate(cfg: dict, st: dict, rt: dict) -> None:
             body = (f"{reason}\n"
                     f"time: {when} (local)\n"
                     f"incident: runtime/{inc.name}\n"
-                    f"action: open the hub http://127.0.0.1:8770/ and have Claude read runtime/{inc.name}\n"
+                    f"action: open the hub http://127.0.0.1:8770/ and read runtime/{inc.name}\n"
                     f"note: trades are fail-closed on a stall -- capital is safe; this is a reliability alert.")
             results = notify(cfg, "ATLAS: model server stall", body)
             st.update({"down": True, "trigger": "journal" if journal_down else "health",

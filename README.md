@@ -4,7 +4,7 @@
 
 ![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.14-3776AB?style=flat-square&logo=python&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-731%20passing%20%2F%205%20skipped-brightgreen?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-726%20passing%20%2F%205%20skipped-brightgreen?style=flat-square)
 ![Mode](https://img.shields.io/badge/mode-shadow%20(no%20orders)-critical?style=flat-square)
 ![Strategies](https://img.shields.io/badge/strategies-20%20armed-8A2BE2?style=flat-square)
 ![Status](https://img.shields.io/badge/status-work%20in%20progress-orange?style=flat-square)
@@ -31,7 +31,8 @@ That claim is mechanically enforced. A test spawns a clean subprocess, imports t
 # tests/test_keep_imports.py::test_no_order_machinery_reachable_from_options
 banned = [b for b in ('atlas.execution.order_lifecycle',
                       'atlas.execution.broker_adapter', 'atlas.execution.guardian',
-                      'atlas.execution.robinhood_adapter', 'atlas.orchestrator', 'atlas.app')
+                      'atlas.execution.robinhood_adapter', 'atlas.execution.rh_mcp_client',
+                      'atlas.orchestrator', 'atlas.app')
           if b in sys.modules]
 assert not banned, f'order machinery reachable: {banned}'
 ```
@@ -88,7 +89,7 @@ flowchart TD
 
     B --> L[5 signal lanes]
     L --> G[Signal gates<br/>staleness, hours, macro blackout, merge, concurrency]
-    G --> S[Contract selector<br/>DTE 0-5, ~17 hard gates, then EV stage]
+    G --> S[Contract selector<br/>DTE 0-5, 20 hard gates, then EV stage]
     S --> E[Shadow entry record<br/>three fill ledgers]
 
     H --> P[Per-strategy scan to ProposedCombo]
@@ -115,17 +116,17 @@ Marks and exits interleave continuously rather than flowing once through the led
 | `MacroReactionLane` | macro-print reaction | live |
 | `PreEarningsStubLane` | event straddle | permanent stub |
 
-Selector gates include quote sanity, DTE, spread `<= 10%` and `<= $0.30`, open interest `>= 1000/300`, volume `>= 100`, IV solvability, delta 0.40 to 0.80, and a band on option lambda (elasticity). Only contracts surviving all of them reach the expected-value stage (net return on ask `>= 10%`, EV `>= 2x` round-trip spread, P(profit) `>= 40%`).
+Selector gates include quote sanity, DTE, spread `<= 10%` relative plus an absolute cap of `max($0.30, 5% of mid)` on non-index underlyings, open interest `>= 1000/300`, volume `>= 100`, IV solvability, delta 0.40 to 0.80, and a band on option lambda (elasticity). Only contracts surviving all of them reach the expected-value stage (net return on ask `>= 10%`, EV `>= 2x` round-trip spread, P(profit) `>= 40%`).
 
-The exit ladder carries a standing prohibition: no rule may fire on a premium threshold. Entry price appears in exactly three places platform-wide (an inert directive-disabled knob, a cost-basis backstop that can only protect a winner, and an applicability gate that can only prevent a sale) and never enters an EV or probability computation. What you paid is not evidence about what the contract is worth. The v1 engine is frozen verbatim in `exit_engine_legacy.py` as the paired-replay A/B baseline and nothing imports it at runtime.
+The exit ladder carries a standing prohibition: no rule may fire on a premium threshold. Entry price appears in exactly three places in the exit engine (an inert directive-disabled knob, a cost-basis backstop that can only protect a winner, and an applicability gate that can only prevent a sale) and never enters an EV or probability computation. What you paid is not evidence about what the contract is worth. The v1 engine is frozen verbatim in `exit_engine_legacy.py` as the paired-replay A/B baseline and nothing imports it at runtime.
 
-**2. Strategy lab** (`atlas/strategy_lab/`, plus `scripts/run_strategy_lab.py`). Twenty independently published strategies scan on their own intervals against the shared hub: VRP short straddle, 45D/16D managed strangle and iron condor, jade lizard, 1x2 backspread, ATM calendar in low IV, RSI-2 short put and bear call, gap-fade bull put, Donchian breakout debit vertical, TSMOM long options, overnight 1DTE strangle, zero-DTE morning iron condor, pre-FOMC drift call, earnings IV-crush strangle, pre-earnings long straddle, squeeze long straddle, weekly put-write, and managed short put. All 20 are `state: armed` in `config/strategy_lab.yaml`.
+**2. Strategy lab** (`atlas/strategy_lab/`, plus `scripts/run_strategy_lab.py`). Twenty independently published strategies scan on their own intervals against the shared hub: VRP short straddle, 45D/16D managed strangle and iron condor, held iron condor, jade lizard, 1x2 backspread, ATM calendar in low IV, RSI-2 short put and bear call, gap-fade bull put, Donchian breakout debit vertical, TSMOM long options, overnight 1DTE strangle, zero-DTE morning iron condor, pre-FOMC drift call, earnings IV-crush strangle, pre-earnings long straddle, squeeze long straddle, weekly put-write, and managed short put. All 20 are `state: armed` in `config/strategy_lab.yaml`.
 
 Each was implemented from its own research brief in `docs/strategies/briefs/` (26 briefs, including several not yet implemented), citing primary literature with locators (Bakshi and Kapadia 2003, Coval and Shumway 2001, Goyal and Saretto 2009) alongside practitioner sources. Constants that could not be traced to a source are marked `UNKNOWN` rather than invented, and adapted ones are flagged `ADAPTED`.
 
-**Where AI is allowed to be.** Deliberately at the edges. Five free-tier cloud providers (OpenRouter, Groq, Cerebras, Z.ai, Gemini) propose a premarket watchlist, and one local model runs a gated post-close job. Their output is treated as untrusted input: external text is sealed in fenced blocks with backticks and newlines scrubbed so the fence cannot be broken, and replies pass a hard drop-never-repair allowlist (`^[A-Z]{1,5}$` symbols, a closed 11-kind catalyst enum, 280-character summaries). Nothing under `atlas/options/` references a model or a provider. The live decision path is pure math.
+**Where AI is allowed to be.** Deliberately at the edges. Five free-tier cloud providers (OpenRouter, Groq, Cerebras, Z.ai, Gemini) propose a premarket watchlist, and one local model runs a gated post-close job. Their output is treated as untrusted input: external text is sealed in fenced blocks with backticks and newlines scrubbed so the fence cannot be broken, and replies pass a hard drop-never-repair allowlist (`^[A-Z]{1,5}$` symbols, a closed 11-kind catalyst enum, 280-character summaries). No module under `atlas/options/` imports or calls a model or a provider. The only LLM-derived data that reaches the options package is the news-flag tail read by `news_cache.py`: a stage-2 entry covariate that is stamped onto shadow entry records and graded, plus a re-mark cadence trigger that changes only *when* an open position is re-priced. It gates nothing, and no LLM output enters an EV or probability computation. The live decision path is pure math.
 
-`docs/PROMOTION_LADDER.md` formalizes this: stage 0 side artifact, 1 briefing, 2 entry covariate, 3 N-graded, 4 replay column, 5 live gate. One stage per registration, no skipping, demotion is free, and rule 4 reads: LLM output always enters at stage 0, no exceptions, including Claude's.
+`docs/PROMOTION_LADDER.md` formalizes this: stage 0 side artifact, 1 briefing, 2 entry covariate, 3 N-graded, 4 replay column, 5 live gate. One stage per registration, no skipping, demotion is free, and rule 4 reads: LLM output always enters at stage 0, no exceptions, whatever the model or tier.
 
 ## Status and known gaps
 
@@ -165,14 +166,11 @@ Windows and PowerShell, since that is what it runs on.
 py -3 -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 
-# Three packages the suite imports are not yet pinned in requirements.txt.
-.venv\Scripts\python.exe -m pip install httpx pyarrow alpaca-py
-
 # Run the tests. Nothing here touches a broker or the network.
 .venv\Scripts\python.exe -m pytest -q
 ```
 
-That much works on a fresh clone with no credentials at all. Two warnings, both real. `requirements.txt` is incomplete: `httpx` (the HTTP client the Tradier and news collectors use), `pyarrow` (parquet round-trips in the daily-append tests) and `alpaca-py` (imported by the Benzinga news test) are needed but unlisted, and four tests fail without them. It also pulls in `playwright` for an optional vision path the suite does not need, so a plain install downloads a browser-automation package you can skip if you only want to run the tests. Both are on the fix list.
+That works on a fresh clone with no credentials at all: `requirements.txt` now pins everything the suite imports, including `httpx`, `pyarrow` and `alpaca-py`. One caveat remains: it also pulls in `playwright` for an optional vision path the suite does not need, so a plain install downloads a browser-automation package you can skip if you only want to run the tests.
 
 To run the live-data loops you need a Tradier token in `config/tradier.local.yaml` (copy `config/tradier.example.yaml`). Tradier is the only feed the live loop actually needs. Alpaca, Finnhub and the cloud-model keys are optional, and every source fails open.
 
@@ -201,10 +199,10 @@ Use `py -3` or the venv python explicitly. On the development machine a bare `py
 ## Project layout
 
 ```
-atlas/                    importable engine, 90 files / 18,503 LOC
+atlas/                    importable engine, 89 files / 18,068 LOC
   options/                main shadow, 4,223 LOC
     lanes.py              5 lane classes, 4 live + PreEarningsStubLane
-    selector.py           DTE 0-5 chain -> ~17 hard gates -> EV stage
+    selector.py           DTE 0-5 chain -> 20 hard gates -> EV stage
     exit_engine.py        13-rule first-match ladder, no premium triggers
     exit_engine_legacy.py frozen v1, kept only as the paired-replay A/B baseline
     shadow.py             the only side-effect surface: 4 append-only JSONL paths
@@ -216,15 +214,15 @@ atlas/                    importable engine, 90 files / 18,503 LOC
     grading.py            FOR/AGAINST e-processes, mechanism attribution
     verdicts.py           verdict machine + prune bar
     exposure.py           cross-strategy Greeks and effective_n
-    strategies/           22 files: the 20 armed strategies + shared scaffolding
+    strategies/           21 files: the 20 armed strategies + __init__.py scaffolding
   collect/                Tradier data, news, catalysts, symbol halt state (3,264 LOC)
   signals/                pure-numpy indicators, no TA library (1,142 LOC)
   hunter/                 batched quote poller and floors (974 LOC)
   crew/                   cloud providers and consensus, premarket only (779 LOC)
-  execution/              stripped shell: data-token client + rate gate, no order path (559 LOC)
-scripts/                  27 Python entry points + 10 PowerShell supervisors, 9,381 LOC
-tests/                    78 files / 12,942 LOC / 651 test functions
-docs/                     55 markdown files, ~13,900 lines, incl. 26 strategy briefs
+  execution/              stripped shell: stdlib rate gate only, no broker transport (124 LOC)
+scripts/                  26 Python entry points (9,311 LOC) + 10 PowerShell supervisors + 1 .cmd wrapper, 10,101 lines total
+tests/                    77 files / 12,906 LOC / 647 test functions
+docs/                     54 markdown files, ~13,500 lines, incl. 26 strategy briefs
 config/                   17 files: 14 real shipped configs + 3 credential templates
 schemas/                  5 JSON Schemas
 runbooks/                 halt_and_flatten, model_swap_recovery, paper_day_runbook
@@ -234,9 +232,9 @@ tools/                    datafeed_world_size.py
 conftest.py, pytest.ini
 ```
 
-Total: 196 Python files / 40,967 LOC.
+Total: 194 Python files / 40,454 LOC (including the root `conftest.py`).
 
-`config/` is not templates only. Exactly three files are examples (`credentials.example.yaml`, `telegram.example.json`, `tradier.example.yaml`, plus `.env.example` at the root). The other fourteen are the real shipped configuration the system runs on, including `strategy_lab.yaml`, `risk_limits.yaml`, `signal_params.yaml` and `scanner.yaml`, so you can read the actual parameters rather than a sanitized stand-in.
+`config/` is not templates only. Exactly three files are examples (`credentials.example.yaml`, `telegram.example.json`, `tradier.example.yaml`, plus `.env.example` at the root). The other fourteen are the real shipped configuration the system runs on, including `strategy_lab.yaml`, `risk_limits.yaml`, `signal_params.yaml` and `scanner.yaml`, so you can read the actual parameters rather than a sanitized stand-in. Their comments are unedited, so some of them cite equity-era modules and one-off validation scripts (`atlas/app.py`, `atlas/scan/context.py`, `scripts/measure_pipeline.py` and friends) that were archived in the 2026-07-10 options pivot and are not in this copy. The provenance is left intact deliberately; the cited paths are history, not shipped code.
 
 `runtime/` is gitignored and created on first run, so a fresh clone starts without it.
 
@@ -246,7 +244,7 @@ Total: 196 Python files / 40,967 LOC.
 .venv\Scripts\python.exe -m pytest -q
 ```
 
-On a fresh clone, with the three unpinned packages above installed: **736 tests, 731 pass and 5 skip.** The 5 skips are live-deployment canaries that need machine-local runtime state and cannot pass anywhere but the deployment machine (four want a sweep ledger under `runtime/`, one wants a real alert topic).
+On a fresh clone: **731 tests, 726 pass and 5 skip.** The 5 skips are live-deployment canaries that need machine-local runtime state and cannot pass anywhere but the deployment machine (four want a sweep ledger under `runtime/`, one wants a real alert topic).
 
 Coverage is broad rather than nominal, and the file names are greppable:
 

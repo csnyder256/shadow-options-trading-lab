@@ -3,7 +3,8 @@ picks the contract we WOULD buy, and the exit engine manages the hypothetical po
 outputs are the fsync'd JSONL ledgers (atlas/options/shadow.py). There is NO broker-order code
 path anywhere in this module or its imports - structurally a shadow.
 
-Process skeleton = scripts/run_hunter.py (pid lock runtime/options_shadow.lock, heartbeat
+Process skeleton follows the equity-era hunter runner, archived out of this tree (pid lock
+runtime/options_shadow.lock, heartbeat
 runtime/options_shadow_heartbeat.json each loop, --once, per-loop exception containment, clean
 Ctrl-C). Feeds: TradierData via config/tradier_shadow.local.yaml FIRST (the dedicated
 options-project token = its own 120/min budget) falling back to config/tradier.local.yaml; the
@@ -127,7 +128,7 @@ def make_log():
 
 
 def _pid_alive(pid: int) -> bool:
-    """Never signals/kills (run_hunter idiom): Windows OpenProcess probe, POSIX kill(pid, 0)."""
+    """Never signals/kills: Windows OpenProcess probe, POSIX kill(pid, 0)."""
     if pid <= 0:
         return False
     if os.name == "nt":

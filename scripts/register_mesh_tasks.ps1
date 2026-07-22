@@ -22,8 +22,6 @@
 # OvernightLab). After any re-run, re-run scripts\pivot_task_cutover.ps1 (elevated).
 # REGISTERED OUTSIDE THIS SCRIPT (multi-trigger / non-python shapes; 2026-07-11 Wave 0):
 #   ATLAS-CatalystArchive  08:30/12:30/17:30 daily -> archive_catalyst_events.py (opts-catalyst-archive-v1)
-#   ATLAS-AutoEOD          weekdays 17:00 -> run_autonomous_eod.cmd (opts-auto-claude-v1;
-#                          claude -p /eodreport, propose-mode, deny-ruled)
 #   ATLAS-OptionsDay       weekdays 07:30 -> launch_options_day.ps1 (pivot_task_cutover.ps1;
 #                          replaces the retired equity-era ATLAS-LiveDay, now Disabled)
 #   ATLAS-Rehearsal        one-shot Sun 2026-07-12 18:00 -> launcher -SkipSessionCheck

@@ -8,6 +8,13 @@ pydantic>=2
 PyYAML
 jsonschema
 
+# Data plane: httpx is the HTTP client behind the Tradier + news collectors; pyarrow backs the
+# parquet round-trips in the daily-append path; alpaca-py is the optional secondary bar feed
+# (imported at module scope by the news collector, so it is required for a clean import).
+httpx
+pyarrow
+alpaca-py
+
 # Test
 pytest
 
@@ -17,7 +24,6 @@ pytest
 playwright
 
 # --- Added in later milestones (kept here for reference, install when reached) ---
-# alpaca-py          # M3 data feed + M4 paper broker
 # finnhub-python     # M3 news / earnings calendar
 # instructor         # M2 constrained-decoding retry wrapper
 # outlines           # M2 grammar-constrained JSON

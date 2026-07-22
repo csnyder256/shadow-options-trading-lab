@@ -1,5 +1,5 @@
-# FLOOR HUNTER configuration (2026-07-09 overhaul; plan: .claude/plans + mission ledger
-# 20260709-floor-hunter-overhaul.md). INERT until hunter.enabled is true AND the Hunter process is
+# FLOOR HUNTER configuration (2026-07-09 overhaul).
+# INERT until hunter.enabled is true AND the Hunter process is
 # wired (P3); fire_mode stays "journal" (shadow) until the P5 live gate. Thresholds marked SWEEP are
 # provisional - the P1 replay gate's pre-registered sweep decides them; treat the values here as the
 # defaults under test, not validated numbers.

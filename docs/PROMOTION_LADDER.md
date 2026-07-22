@@ -24,7 +24,7 @@ Stage 5   LIVE GATE / LANE  only on a PASS-bar row (N>=25, WORST mean net>0, gro
    for stage 4, and stage 4's replay verdict is the toll for stage 5.
 3. **Demotion is free; promotion never is.** Anything can be switched off or pushed down a
    stage without ceremony; climbing always costs a registration + evidence.
-4. **LLM output always enters at stage 0.** No exceptions - including Claude's.
+4. **LLM output always enters at stage 0.** No exceptions, whatever the model or tier.
 5. **Numbers in any artifact are code-computed.** An LLM tag can label; only registered
    deterministic code turns labels into thresholds, probabilities, or prices.
 6. **The exit ladder is above stage 5.** It is not on this ladder; no signal climbs into it.

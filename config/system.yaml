@@ -1,11 +1,11 @@
-# system.yaml â€” RUNTIME MODE, BROKER SELECTION, CAPABILITY GATES
+# system.yaml - RUNTIME MODE, BROKER SELECTION, CAPABILITY GATES
 # Read by the Orchestrator. Going LIVE is a deliberate human edit here, never automatic.
 # Doc: docs/02_system_architecture.md, docs/09_validation_and_production.md
 version: 0.1
 
 # ---- Mode --------------------------------------------------------------------
 mode: live                          # backtest | paper | live   (ARMED 2026-06-23 at user request)
-# ARMED for real money. KEY 1 OF 2 â€” real orders ALSO require --broker robinhood_live at launch
+# ARMED for real money. KEY 1 OF 2 - real orders ALSO require --broker robinhood_live at launch
 # (launch_live_day.ps1 sets it). A sim/paper APP run is now REFUSED while mode=live (revert to run sim).
 
 phase_gates:
@@ -20,11 +20,11 @@ phase_gates:
 models:
   analyst:
     name: GLM-4.7-Flash-local        # Technical Analyst (bull/bear/uncertainty + technical/market/news)
-    constitution: ANALYST_CONSTITUTION.md
+    # constitution: archived with the equity system; not shipped in this copy
     output_schema: schemas/analyst_view.schema.json
   auditor:
     name: Qwen3.6-27B-local          # adversarial Risk Auditor (risk_flags + risk_score), different family
-    constitution: AUDITOR_CONSTITUTION.md
+    # constitution: archived with the equity system; not shipped in this copy
     output_schema: schemas/auditor_view.schema.json
   serving_config: config/models.yaml
   temperature: 0.0
@@ -33,7 +33,7 @@ models:
   constrained_decoding: true        # llama.cpp json_schema / Outlines enforce the per-role schemas
   max_proposals_per_cycle: 200      # FLOOD CIRCUIT-BREAKER, *not* a queue cap. The candidate
                                     # picker's min_quality_score (signal_params.yaml) is the real
-                                    # throttle â€” tune it with scripts/measure_pipeline.py. This only
+                                    # throttle - tune it with scripts/measure_pipeline.py. This only
                                     # trims (and logs LOUDLY) if the picker returns an absurd number,
                                     # so it never silently starves the models in normal operation
                                     # (measured pass-rate at threshold 55 = ~51/500). (2026-06-22)
@@ -56,7 +56,7 @@ brokers:
     sim:
       type: SimBrokerAdapter        # shadow fills vs LIVE data; same code path as live
       models: [slippage, spread, partial_fills, options_assignment_on_expiry]
-      # Shadow-fill cost model â€” the live-sim counterpart of the backtest's researched slippage convention
+      # Shadow-fill cost model - the live-sim counterpart of the backtest's researched slippage convention
       # (atlas/backtest/bracket_sim.py + engine.py; same knobs/citations as the grid in
       # scripts/slippage_floor_revalidation.py). ALL DEFAULT 0 = optimistic EXACT fills (today's behavior).
       # Set non-zero so `--broker sim` shadow runs reflect realistic costs. Read by app.build_orchestrator.

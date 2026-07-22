@@ -121,7 +121,7 @@ fast-decay (Q≈14d)**, **trade reflections & fundamentals → slow-decay (Q≈3
 ### 5.7 Identity stability - why the seat stops rotating
 
 The analyst's **identity is not in the context; it is in
-[`ANALYST_CONSTITUTION.md`](../ANALYST_CONSTITUTION.md)** (and `AUDITOR_CONSTITUTION.md` for the auditor), a static, version-controlled file re-served
+`ANALYST_CONSTITUTION.md`** (archived with the equity system, not shipped here) (and `AUDITOR_CONSTITUTION.md` for the auditor), a static, version-controlled file re-served
 verbatim every cycle. Persona, mandate, tone, and hard rules are therefore *constant by
 construction*, regardless of how the underlying context window churns. Even across a crash,
 restart, or full compaction, the next cycle reconstitutes the **same** operating identity from

@@ -65,7 +65,7 @@ on-disk storage and serves it fresh:
 
 Because the orchestrator rebuilds context from disk on every cycle, **compaction of the
 in-flight context is irrelevant** - there is nothing important in there to lose. The analyst's
-*identity* is defined by static, version-controlled role constitutions ([`ANALYST_CONSTITUTION.md`](../ANALYST_CONSTITUTION.md) + [`AUDITOR_CONSTITUTION.md`](../AUDITOR_CONSTITUTION.md)),
+*identity* is defined by static, version-controlled role constitutions (`ANALYST_CONSTITUTION.md` + `AUDITOR_CONSTITUTION.md`, archived with the equity system and not shipped here),
 re-served every cycle, not by accumulated chat history. The seat never rotates because the
 occupant is reconstituted identically each time.
 

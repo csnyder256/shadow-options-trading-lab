@@ -48,7 +48,6 @@ assumption.
 | ATLAS-LiveDay | daily 07:30 | Ready | `powershell ... scripts\launch_live_day.ps1 -Scanner -BuildRsTable -UntilTime 15:20` |
 | ATLAS-IVSnapshot | daily 14:45 | Ready | `.venv\Scripts\python.exe scripts\snapshot_iv.py --once` |
 | ATLAS-OvernightLab | daily 15:25 | **Disabled** | `.venv\Scripts\python.exe scripts\run_overnight_lab.py --once` |
-| ATLAS-AuthKeepalive | weekly Sun 18:00 | Ready | `.venv\Scripts\python.exe scripts\rh_verify.py` |
 
 > **AUDIT FLAG (explained):** ATLAS-OvernightLab is **deliberately Disabled for the
 > 2026-07-11/12 weekend** (Wave-0 step 4 of the pivot plan: it would otherwise fire at 15:25
@@ -134,12 +133,11 @@ up under 10 sessions), which the runner passes to the selector as nullable conte
 
 ### 1.5 ATLAS-OvernightLab → `scripts/run_overnight_lab.py` - see §9.4.
 
-### 1.6 ATLAS-AuthKeepalive → `scripts/rh_verify.py`
+### 1.6 ATLAS-AuthKeepalive (broker auth keepalive)
 
-Read-only Robinhood MCP phase-1 probe (OAuth DCR + PKCE + refresh via
-`atlas/execution/rh_mcp_client.RobinhoodMCPClient`); refresh token cached at
-`config/rh_token.local.json`. Weekly Sunday run keeps the **grading-side** RH token warm
-(/eodreport truth-validation). The options day path itself needs **no Robinhood** - stated in
+A read-only weekly OAuth refresh probe kept the **grading-side** broker token warm for
+truth-validation. Its client and probe script are excluded from the public copy, so neither
+ships here. The options day path itself needs **no Robinhood** - stated in
 `scripts/launch_options_day.ps1` header: "It needs NO Robinhood, NO Alpaca and NO llama-swap at
 launch."
 
@@ -849,13 +847,12 @@ per-stage containment (a raised stage → `{"error": ...}`, exit 6, others still
    live `health()` on the already-running server, then ONE temp-0 JSON smoke call
    (glm-4.7-flash); otherwise `{"skipped": reason}`.
 
-### 9.5 /eodreport Phase 3b pointer
+### 9.5 Nightly grading procedure pointer
 
-The nightly options grading procedure for the /eodreport skill lives at
-`C:\path\to\.claude\skills\eodreport\references\options-shadow.md`
-(the authority doc for grading posture; verified present - note it sits in the OUTER
-`trading_framework\.claude\`, one level above this repo root). It pins the same ledger paths,
-falsification gates, and pre-registration discipline described here.
+The nightly options grading procedure (the authority doc for grading posture) is maintained
+outside this repository, one level above the repo root, and is not part of the public copy.
+It pins the same ledger paths, falsification gates, and pre-registration discipline
+described here.
 
 ---
 

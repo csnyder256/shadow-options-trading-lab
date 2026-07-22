@@ -18,7 +18,7 @@ Outputs (runtime/harvest/):
   harvest_report.json     counts incl. INACTIVE (delisted) coverage for the survivorship note
 
 Survivorship honesty: INACTIVE assets are attempted too; the report separates their coverage so the
-replay gate can quantify (not hide) the missing-delisted bias. See the mission ledger.
+replay gate can quantify (not hide) the missing-delisted bias.
 """
 
 from __future__ import annotations

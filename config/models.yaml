@@ -1,7 +1,7 @@
 # models.yaml - TWO-MODEL LOCAL SERVING + VRAM SWAP POLICY
 # Read by the orchestrator's model layer. The two models share one 24GB GPU and run
 # one-at-a-time (combined ~38GB > 24GB), so a single hot-swap per cycle is mandatory.
-# Doc: docs/02 §2.3-2.4, plan: .claude/plans/hopping-back-to-opus-starry-pebble.md
+# Doc: docs/02 §2.3-2.4.
 version: 0.1
 
 serving:
@@ -40,7 +40,7 @@ roles:
     quant: Q5_K_M
     vram_estimate_gb: 20.0
     ctx: 8192
-    constitution: ANALYST_CONSTITUTION.md
+    # constitution: archived with the equity system; not shipped in this copy
     output_schema: schemas/analyst_view.schema.json
     fingerprint_expected: null       # set after first canary-gated deploy
   auditor:                           # SWAPPED 2026-06-22: was dense Qwen3.6-27B (~92s/call). The MoE
@@ -50,7 +50,7 @@ roles:
     quant: UD-Q5_K_XL
     vram_estimate_gb: 20.0             # gate: 20 + 2 headroom = 22 <= 22.99 capacity (24GB - 1 reserve)
     ctx: 16384
-    constitution: AUDITOR_CONSTITUTION.md
+    # constitution: archived with the equity system; not shipped in this copy
     output_schema: schemas/auditor_view.schema.json
     fingerprint_expected: null
   scout:                               # real-time pre-screen scouts - the --scout pipeline. Default OFF.

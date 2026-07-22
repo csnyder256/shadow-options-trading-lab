@@ -34,9 +34,8 @@ KEEP_MODULES = [
     "atlas.crew",
     "atlas.crew.consensus",
     "atlas.crew.providers",
-    "atlas.execution",                 # stripped shell: rh_mcp_client + rate_gate only
+    "atlas.execution",                 # stripped shell: rate_gate only
     "atlas.execution.rate_gate",
-    "atlas.execution.rh_mcp_client",
     "atlas.hunter",
     "atlas.hunter.feed",
     "atlas.hunter.floors",
@@ -119,6 +118,24 @@ def test_keep_script_spec_loads(script):
         sys.modules.pop(name, None)
 
 
+def test_no_broker_order_transport_ships():
+    """No module in this tree may carry a broker order transport. The equity order
+    machinery is archived and the Robinhood MCP client is excluded from this copy, so
+    there is nothing here that can reach a venue - not disabled, absent."""
+    assert not (REPO / "atlas" / "execution" / "rh_mcp_client.py").exists()
+    needle = "agent.robinhood" + ".com"   # split so this file is not its own match
+    offenders = []
+    for path in REPO.rglob("*.py"):
+        if ".git" in path.parts or "__pycache__" in path.parts:
+            continue
+        if path.resolve() == Path(__file__).resolve():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if needle in text:
+            offenders.append(str(path.relative_to(REPO)))
+    assert not offenders, f"broker order transport present: {offenders}"
+
+
 def test_no_order_machinery_reachable_from_options():
     """The options platform's import closure must not contain the archived order machinery.
     Runs in a CLEAN subprocess - the shared pytest process's sys.modules is polluted by
@@ -134,7 +151,8 @@ def test_no_order_machinery_reachable_from_options():
         "    importlib.import_module(m)\n"
         "banned = [b for b in ('atlas.execution.order_lifecycle',"
         " 'atlas.execution.broker_adapter', 'atlas.execution.guardian',"
-        " 'atlas.execution.robinhood_adapter', 'atlas.orchestrator', 'atlas.app')"
+        " 'atlas.execution.robinhood_adapter', 'atlas.execution.rh_mcp_client',"
+        " 'atlas.orchestrator', 'atlas.app')"
         " if b in sys.modules]\n"
         "assert not banned, f'order machinery reachable: {banned}'\n"
     )

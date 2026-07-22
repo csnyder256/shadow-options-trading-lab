@@ -24,7 +24,7 @@
 ## Historical copies
 
 - git: committed at `cf7ffc9` (`docs/OWNER_RULES.md`), SHA-256 first-12 `d25e74fe6658`.
-- Mission-ledger context: `../.claude/ledger/` (2026-07-09/10/11 entries).
+  That file is archived with the equity system and is not part of this public copy.
 
 Rule-number citations in `atlas/options/exit_engine.py` / `exit_engine_legacy.py` docstrings
 refer to the retracted file's numbering and remain as historical mapping documentation only.

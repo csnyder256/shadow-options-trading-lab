@@ -3,7 +3,7 @@
 **Commissioned by the owner 2026-07-16 (pre-dawn), delivered same day.** Method: 14 subsystem
 math/stat auditors + 3 live-machine probes, adversarial verification (2 independent refuters per
 critical/high finding; ~70 refuter runs completed across two passes), 6 end-to-end coherency seam
-judges, 4 external web researchers, 3-perspective design panel. ~11M agent tokens. Full evidence:
+judges, 4 external web researchers, 3-perspective design panel. Full evidence:
 `docs/audit_2026-07-16/` (digests + raw JSON). Verification legend: **CONFIRMED** = upheld by
 independent refuters with executable repros; **REFUTED** = killed by refuters (listed so nobody
 re-litigates); **PLAUSIBLE** = numeric repro on record, adversarial pass incomplete (usage limits).
@@ -21,7 +21,7 @@ making informed decisions, in a slightly casino posture to maximize profit takin
   path has **zero account reads** (grep-verified across runner/launcher/lanes/selector/engine/feed;
   `tradier_data.py` touches only `/v1/markets/*`). The only "money" surfaces are the watch-hub's
   stale **equity-era $0 pills** (display-only, fed by a log nothing writes anymore) and the Sunday
-  `rh_verify` printout (print-only). *The only path by which "$0" ends a day is a human panicking
+  auth-keepalive printout (print-only; not part of the public copy). *The only path by which "$0" ends a day is a human panicking
   at the cosmetic panel - don't.*
 - The day launched clean at 07:30:01 CT: Tradier preflight GO, fresh hunt list
   (`session_date 2026-07-16`, 15 candidates), 5 lanes armed, cohort `6c1dc2a4e1a7`. Two entries by
@@ -357,11 +357,9 @@ registration discipline itself.
 
 ---
 
-*Report author: Claude (Fable 5), 2026-07-16. Workflow runs `wf_a60c614e-a1b` (Part 1 + probes +
-verify) and `wf_23e45fc9-e87` (Part 2). Verification was interrupted twice by session usage
-limits; every finding above is labeled accordingly. The live session was never touched: all
-probes read-only, all edits doc-only, decision code unmodified (suite green after the OWNER_RULES
-errata).*
+*Audit performed 2026-07-16 in two parts (Part 1 + probes + verify, then Part 2). The live
+session was never touched: all probes read-only, all edits doc-only, decision code unmodified
+(suite green after the OWNER_RULES errata).*
 
 ---
 

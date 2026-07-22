@@ -350,12 +350,10 @@ order* anywhere in the platform's import closure.
    `broker_adapter`/`order_lifecycle`/`guardian`/`robinhood_adapter` stack) is **archived to
    `attic/` and equity-shaped**. The options shadow uses none of it and has **no submit seam at
    all**; an options-order equivalent would be built and injected from scratch.
-2. **A real order channel.** The kept `atlas/execution/` is a stripped shell - a generic Robinhood
-   MCP client (`rh_mcp_client`) plus a rate gate whose priority set is **equity-only** (no
-   option-order tool is even classified). The client *could* in principle call
-   `place_option_order`, but **nothing in the codebase does** (grep-empty); its only current job is
-   keeping the **grading-side** RH token warm for `/eodreport` truth validation - a data token, not
-   a trading channel.
+2. **A real order channel.** The kept `atlas/execution/` is a stripped shell - a stdlib rate gate
+   and nothing else. The broker MCP client that used to sit beside it (a data-token refresher for
+   grading-side truth validation, never an order caller) is excluded from this public copy, so no
+   broker transport of any kind ships here.
 3. **The affordability filter, re-enabled as a FINAL gate.** By directive, account size returns
    *only* as a last "can we afford it" filter applied *after* value selection - set
    `premium_max_usd` to a number to arm it. (The dormant `options_live_min_equity: $2000` config is

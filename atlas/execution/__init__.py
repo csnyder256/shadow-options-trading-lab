@@ -1,8 +1,8 @@
 """Post-pivot (2026-07-10, all-in options): the equity order machinery (broker adapters,
 order lifecycle, guardian, reconcile, sim) is ARCHIVED under attic\\atlas\\execution\\.
-Only two modules remain - `rh_mcp_client` (the Robinhood MCP auth/transport that
-scripts\\rh_verify.py + the ATLAS-AuthKeepalive task use so nightly /eodreport grading keeps
-its truth-data token fresh) and its stdlib-only `rate_gate`. The OPTIONS platform never
+One module remains - the stdlib-only `rate_gate`, a pure request-pacing helper with no
+network code. The broker MCP auth/transport that used to sit beside it is excluded from
+this public copy, so no order transport ships at all. The OPTIONS platform never
 imports this package (pinned by tests\\test_keep_imports.py); nothing here is on any
 decision path. Archived names resolve lazily or fail loud with a pointer."""
 

@@ -1,9 +1,11 @@
 # ATLAS - EOD Report Changelog
 
-The compounding record of the `/eodreport` post-market self-improvement pass. Each run appends a dated
+The compounding record of the post-market self-improvement pass. Each run appends a dated
 entry (newest first) and updates the Change-ledger table. An armed change is not "done" until a later run
 re-audits it and marks it VALIDATED or REVERTED - as the sample grows, so does our knowledge of what works.
-Format: `.claude/skills/eodreport/references/changelog-format.md`.
+
+Note: entries below cite some modules that were archived with the equity system and are not part of
+this public copy.
 
 ## 2026-07-21 (Tue) - lab day 2: overnight-gap loss (QQQ), funnel warmup-guard shipped, main shadow bleeds a 6th session
 
@@ -196,7 +198,7 @@ after this grade - not-yet-run today, not a failure; the fallback ladder is desi
 
 ## Change ledger (running list of every behavior change)
 
-Validation is by AFFECTED-TRADE count (X/N), never days - see `.claude/skills/eodreport/references/changelog-format.md`.
+Validation is by AFFECTED-TRADE count (X/N), never days.
 
 | Date armed | Change | Default | Status | Strategy | Affected (X/N) | Evidence / notes |
 |------------|--------|---------|--------|----------|----------------|------------------|
@@ -270,7 +272,7 @@ Scorecard (`runtime/options_shadow_scorecard.json`): `index_trend` n=2 (2/25), n
 **Watch-items opened:** (1) Wave 0–3 from the 2026-07-16 audit are unimplemented - highest-value next step is Wave 0 (replay-lab capture repair + grader dedupe-by-position_id + measure-disagreement logging), all non-decision-changing per the audit's own sequencing. (2) Today's QQQ cut and NVDA scratch are both live reproductions of Tier-A/Tier-B audit findings (TRAJECTORY-1/SELECTOR-3 noise-clock; EXIT-ENGINE-3 backstop-scratches-winners) - worth citing as fresh evidence if/when Wave 2 is scoped. (3) Cohort `6c1dc2a4e1a7` legacy-vs-v2 paired-replay seed still 0 fills (unchanged from 07-15).
 
 ### 2026-07-15 (Wed) - MANUAL run: retroactively grades 07-13 + 07-14 (the two aborted nights) and today; auto-EOD decommissioned
-**Context:** First data-capable /eodreport since the pivot's silent stretch (interactive session → python, `runtime/` junction, and RH-MCP all reachable). The autonomous **ATLAS-AutoEOD** cadence (weekdays 17:00 CT) is being **decommissioned** tonight at the owner's direction - the Claude `-p` session doesn't record results in a form his Discord SDK can read, so the unattended run has no consumer. This manual pass clears the 07-13/07-14 UNGRADED backlog and the "confirm 07-14 zero was genuine" watch-item. Falsification gates CLEAN all three days (`malformed_exits [] · ledger_identity_violations [] · expired_unexited []`).
+**Context:** First data-capable /eodreport since the pivot's silent stretch (interactive session → python, `runtime/` junction, and RH-MCP all reachable). The autonomous **ATLAS-AutoEOD** cadence (weekdays 17:00 CT) is being **decommissioned** tonight at the owner's direction - the unattended run didn't record results in a form the Discord SDK can read, so it had no consumer. This manual pass clears the 07-13/07-14 UNGRADED backlog and the "confirm 07-14 zero was genuine" watch-item. Falsification gates CLEAN all three days (`malformed_exits [] · ledger_identity_violations [] · expired_unexited []`).
 
 **Day (07-15):** 0 entries · 0 exits · heartbeat healthy (5 lanes armed, pid alive). Tape: SPY +0.39% · DIA +0.25% · QQQ −0.28% · IWM +0.43% - quiet mixed day; zero-entry defensible (the lone last30 QQQ-put signal @15:30 hit `no_pick` on spread/OI, and QQQ closed only −0.28% → no real miss). Shadow ignores portfolio value by design - the account is not a grading input.
 
@@ -280,7 +282,7 @@ Scorecard (`runtime/options_shadow_scorecard.json`): `index_trend` n=2 (2/25), n
 
 **Non-results (the real story - funnel starvation, NOT errors):** 10 `no_pick` + 1 `no_chain_rows` across 3 days; **fires = 1 / 7 sessions = 0.14/day ≪ 2/day → review trigger MET.** Dominant reject reasons are at the SELECTION stage: `no_quote` (SPY 142, CPI-SPY 121, IWM 66), `spread_pct`, `open_interest`, `hold_exceeds_third_of_life`. `no_chain_rows` on NXTC (M&A pop, first5_rvol 761 - but no listed options). Signals ARE generating; the bottleneck is CONTRACT SELECTION + Tradier quote availability, not signal count.
 
-**Errors found & fixed:** NONE. All shadow `*.err.log` 0 bytes (07-15); 0 error-events in the journal; `options_shadow.log` clean 10s ticks. ⚠ One anomaly identified and DISMISSED per the owner: the 07-10 equity `PORTFOLIO drawdown-halt −20.08% (equity 320.89 vs day_start 401.50)` is the **−$80.61 account transfer**, not a trading loss or system fault - the equity engine (disarmed, deployment 0) read account value; the options shadow correctly never saw it. Not fixing (owner's instruction; the value-reading path is equity-only and already dormant).
+**Errors found & fixed:** NONE. All shadow `*.err.log` 0 bytes (07-15); 0 error-events in the journal; `options_shadow.log` clean 10s ticks. ⚠ One anomaly identified and DISMISSED: the 07-10 equity `PORTFOLIO drawdown-halt` fired on a cash transfer out of the account, not on a trading loss or a system fault - the (disarmed, deployment 0) equity engine read raw account value and could not tell a withdrawal from a drawdown. Not fixing: the value-reading path is equity-only and already dormant, and the options shadow never sees account value at all.
 
 **Affected-sample re-audit:** exit-engine v2 cohort `6c1dc2a4e1a7` → **1/25** (first real graded exit: 07-13 IWM, rule (b), truth-validated CORRECT; overnight-variant divergences 0 - intraday, not overnight-eligible). premium-cap-removal **0/25** (IWM pick $188 < old $350 cap → not affected). rule-(c) premium-stop-inert **0/25** (position only −8%, never near −50%). Equity guards unchanged (no equity decisions since the 07-10 halt).
 
@@ -430,8 +432,7 @@ ledgers (the data is on disk - `Glob` confirms the 07-13 files exist - it was on
 **Day:** RH auth outage 09:30–10:50 ET (token expired 07-09 evening, authorize window missed; whole stack
 down - see ledger E22) → shadow live 10:50:52–16:14 ET. **0 entries / 0 exits** - heartbeat continuous,
 0 process errors, all 5 lanes armed, `entries_today` reconciles. Falsification gates pass vacuously (0 exits).
-The operator cleared the equity book manually EOD and made an external cash withdrawal ~14:45 CT
-(both EXCLUDED from grading per directive).
+The retired equity book was cleared manually EOD (EXCLUDED from grading per directive).
 
 **THE day-1 finding - the funnel WORKED; the outage ate all three fires.** The journal shows three
 backfill-era signals expired at launch, all with windows inside 09:34–09:57 ET: `index_trend` IWM put
@@ -466,340 +467,9 @@ live default's counterfactual mirror).
 **Open watch-items for next run:** first real entries → falsification gates non-vacuous; premium-scale
 heterogeneity in $-aggregates (read %-of-premium too); gemini provider down; noise-cache refresh built?;
 day-briefing crew retry-pass (05:15 single-shot leaves flaky providers out - queue item, not built).
-**Day:** 101 model decisions · **2 fills (PEB, MGM)** · 1 exit (PEB eod_flat −1.23%). MGM held overnight
-(Guardian-protected). Account **≈ −$0.20 (≈ −0.1%)**: PEB realized −$0.29, MGM +0.37% unrealized (~+$0.09).
-**Index comparison: a RED large-cap-value / small-cap tape, mega-tech mildly green - SPY −0.32%, DIA −1.08%,
-IWM −0.92%, QQQ +0.26%.** We were ≈ flat → roughly MATCHED SPY and BEAT DIA/IWM by being defensive on the
-falling value cohort our funnel surfaces. NOT the 07-06 red-on-green divergence, NOT a 07-07-scale opportunity
-miss. Being flat on a red-value day is the correct survival-first posture. The universe skewed almost entirely
-`pullback_in_uptrend` on large-cap industrials/banks/energy (IHG, CVX, COP, CAT, DE, PH, URI, C, TKR…).
 
-**🆕 FROM-TIMESTAMP GRADING (owner's requested change) - VALIDATED LIVE.** The scorecard now measures every
-decision's return FROM THE MOMENT IT WAS LOGGED (entry at the bar at/after the ts; `ret_to_close`, plus
-`mfe_after`/`mae_after` = the true counterfactual), not the whole-day prev_close→close change. First live run:
-**0 fallbacks** - all 40 decision symbols had ET-labeled minute bars. Materially more honest: IHG's day% was
-−1.86%, but from our 5 actual passes it ran −1.03% (early) → **+0.04% / −0.17% (midday/late)** - the "loss"
-was the morning fade we never had a shot at; day-change would have wrongly blamed every IHG pass for the full
-−1.86%. VSEC: −6.6% day but −3.5% from our pass. (`eod_extract.py` `_from_ts`; SKILL.md + data-sources.md updated.)
+---
 
-**Scorecard (from decision ts): 22 AVOIDED_LOSER vs 5 MISSED_MOVER** - rejections strongly net-correct on a
-red tape. Biggest avoids: VSEC −3.5%/−3.2%, SLS −2.9% (−13.9% intraday MAE, a knife), PHM −2.1%/−1.9%,
-BZH −1.6%, H −1.5%, NUE/IHG/C ≈ −1.0%. Misses: **XENE +8.2%** (biotech fresh-52wk-high breakout, analyst-passed
-10:56), **DELL +3.3%** (auditor `low_confidence` blocked a violent −10%→+3.5% bouncer at 10:15), **CPA +2.5%**
-(afternoon recovery, passed 12:01). Same afternoon-momentum blind spot as 07-07 (auditor + analyst_pass on
-eventual breakouts) - but SMALL today and our universe was large-cap value, not the biotech rip.
-
-**Orders:**
-- **PEB** pullback_in_uptrend, entry 17.87 @13:51 → CUT −1.23% (eod_flat). From-ts −0.45% (mfe +0.14, mae −1.12).
-  **NOT a peak-chase** - day was already −3.4%; we bought mid-decline into a weak REIT that kept bleeding.
-  Thesis-aware EOD correctly cut it (reversion loser). Marginal name, modest loss.
-- **MGM** pullback_in_uptrend, entry 46.43 @15:48 → **HELD overnight** (+0.37% into close). A REVERSION WINNER
-  that RODE - the day's design finding (see change below).
-
-**Scanner-survivor audit (Phase 6):** only **1** ranked survivor never evaluated (EAT, rank4) - it dipped to
-−4% then recovered to −0.24% close (net flat), so skipping it left no edge. Throughput was NOT binding today
-(light day); the misses were at the auditor (DELL) + analyst_pass (XENE/CPA), not discovery/throughput.
-
-**Errors found (Phase 5) - no hot fix (correct + disciplined):**
-1. **9 `analyst_error:LLMRequestError`** (glm-4.7-flash HTTP 500 / "model not ready"). ROOT CAUSE: app
-   `parallel: 4` (models.yaml) == analyst server `--parallel 4` sharing a `--ctx-size 24576 --kv-unified`
-   context; 4 large concurrent analyst prompts overflow the shared KV → sporadic 500 → **fail-closed drop**.
-   **Benign + self-healing**: verified all 9 names (WSM/WWD/TJX/VIK/ALAB/LUV/FNB) were RE-EVALUATED cleanly on
-   later cycles, and NONE was a missed winner (from-ts: all < +2%). NO HOT FIX: it's a throughput↔reliability
-   tradeoff (not strictly-dominant); the server ctx lever needs a llama-swap restart (FORBIDDEN); the owner said the
-   error repeating is fine. Recommendation left to the owner (Phase 10). Watch the rate + whether it ever drops an
-   eventual-WINNER.
-2. **Telegram failsafe:** transient heartbeat stall @09:10 tripped a MEDIUM alert, but the SAME pid (3484) kept
-   beating through 15:04 → self-recovered; the /halt failsafe stayed functional (not an outage). The 120s
-   stale-threshold is tight (a transient blip → alert). Low-priority watch-item.
-3. llama-swap 07:31 startup proxy blip - benign. Guardian clean (only PEB eod_flat @15:50; MGM Guardian-protected
-   overnight with a synthetic stop).
-
-**Change applied (1) - `take_reversion_winners` (Guardian EOD), VALIDATE-FIRST default OFF.** When armed, a
-reversion/fixed-target WINNER is TAKEN same-day instead of ridden overnight; momentum (trailing) winners still
-ride. Matrix: momentum = ride (win/lose); reversion = flatten at EOD (take win / cut loss) - the symmetric
-completion of the shipped reversion-loser cut. Triggered by MGM (a reversion winner that rode). `guardian.py`
-(+ `run_guardian.py`, `robinhood.local.yaml`). Byte-identical when off. **Suite 726 green** (+4 tests).
-**Refute: skeptic-verifier FAILED-TO-REFUTE** (re-ran suite via junit XML; proved OFF byte-identical by
-construction; no collateral damage to loser/time-stop/force-flat/stop-breach paths; sole prod caller correct).
-One cosmetic residual: when ARMED, a reversion winner touching `take_profit` inside the EOD window logs reason
-`eod_flat` not `take_profit` (identical fill, label-only) - economically it IS an EOD take; not fixed.
-
-**4-lens design panel on the change (O'Neil/Minervini · mean-reversion-quant · Wyckoff · quant/anti-overfit +
-synthesis) - STRUCTURE SOUND, but 3 material corrections before ARMING:**
-- **Taxonomy leak (the real defect):** `pullback_in_uptrend` is filed non-trailing/reversion (`risk_limits.yaml`)
-  yet DISCOVERED as a live trend-continuation (`discovery.py`: ema_fast>ema_slow, close≥sma_trend). A high-RS /
-  Wyckoff-SOS pullback that closes strong is a LEADER (Last-Point-of-Support) that must RIDE - a blanket flatten
-  would behead it. MGM's limp +0.37% low-volume drift is a Wyckoff NON-event (correctly flattened); the carve-out
-  only protects CONFIRMED leaders. **Arm ONLY with a leadership/SOS carve-out** (rs_pct≥80 / trend-template /
-  close-strength → route to ride), cleanest done **in lockstep with promoting early_wave off shadow** (the ER+ADX
-  gate at `price_action.py` already re-labels trend-regime pullbacks as trailing at detection). `supported_dip` +
-  `range_reversion` flatten unconditionally.
-- **"Spread is the only cost" is mis-transplanted here:** for an already-held lot the exit half-spread is paid
-  under BOTH take and ride (a wash). The real decision is overnight beta-drift-capture vs gap-variance. Rationale
-  corrected in-code.
-- **The validation path I registered is UNSOUND:** the `eod_change_tracker` blended mean ±0.10% at N=25 *lots* is
-  below the spread, underpowered (overnight std 2-4% vs a ~0.3% effect → need hundreds; same-night lots correlated
-  → effective-N ≪ 25), and conflates the reversion thesis's overnight alpha with the documented overnight-drift
-  market anomaly (regime coin-flip). **Correct arming rule (pre-registered):** SHADOW-FIRST (zero capital, ride
-  stays LIVE), PAIRED delta = ride_pnl − take_pnl (ride simulated forward through the real machinery), BETA-STRIPPED
-  (− beta·SPY-overnight), block-bootstrap clustered BY NIGHT, effective-N ≥ 25 NIGHTS across ≥2 regimes, stratified
-  LEADER vs NON-LEADER; ARM iff non-leader delta_excess 90% one-sided upper CI ≤ 0 (taking forfeits no alpha) AND
-  taking materially cuts the left tail. **Dissent (anti-overfit lens):** if a clean leadership split can't be built
-  + powered, don't add the knob at all - winners-ride is a validated incumbent and the marginal variance of a
-  ~$24-50 lot is second-order.
-
-**From-ts grading** (owner's requested change) is TOOLING (no live-trader impact); validated live above (0 fallbacks).
-
-**Affected-sample re-audit:**
-- **climax_reversal_guard (rule1, ARMED):** 0 affected today (no fresh-high climax buy) → stays **1/25**.
-- **climax_gap_guard (rule2, SHADOW):** +**BZH** (open +14.2% into a fresh 52wk high; from our 10:00 pass −1.60%
-  = a correct would-block) → **3/25**. Sample now 2 HELP (GEO −3.64, BZH −1.60) / 1 HURT (BEAM +7.39). Mixed;
-  do NOT arm.
-- **anti_peak_guard (M3, SHADOW):** **0/25 - BLOCKED from accumulating.** Recompute needs per-decision ema21/atr
-  (not in OHLC); today's A/B/D evaluated cohort is small and un-retro-computable. Needs a discovery shadow-logger
-  (watch-item). Re-arm must scope to B/D only, never A (rs_sleeve).
-- **take_reversion_winners:** registered **0/25** (placeholder - real validation is the shadow protocol above,
-  NOT the blended tracker; MGM is the n=1 trigger, next-day-pending).
-- **early_wave shadow (M11):** ran (zero capital) → **0 fires** of 55 watched (the daily-calibrated core rarely
-  fires early_wave). 0/25.
-
-**Watch-items opened (re-audit next run):**
-1. **take_reversion_winners** - ✅ **BUILT (same-day follow-up, owner-requested).** `atlas/shadow/reversion_take.py`
-   (paired, beta-stripped, leader-stratified take-vs-ride grader, mirrors `shadow_early_wave.py`) + the leadership
-   carve-out (`ranking.is_momentum_leader` → `GuardianLevels.is_leader`, plumbed entry→publish→parse; a leader
-   pullback RIDES, never flattened). Byte-identical when the flag is off; suite **745 green** (+19); **refute
-   FAILED-TO-REFUTE** (is_leader can't create a loss-hold or suppress a stop; scale fail-safe). NOT armed - 
-   default OFF. **ARMING CHECKLIST** (all safe-direction/shadow-only today; see ledger): persist/reload
-   `_entry_leader` across restarts; prune it on exit; model grade() gap-through fills; wire /eodreport to
-   populate+grade the shadow (≥25 nights / ≥2 regimes, leader-stratified). Grade MGM's ride next session. Do NOT
-   arm via the blended eod_change_tracker.
-2. **anti_peak_guard (M3) shadow-logger** - compute `(price−ema21)/atr` in discovery and log the would-block
-   without blocking, so M3's N=25 can accumulate (currently stuck at 0/25).
-3. **Analyst-error rate** (parallel=4 shared-KV 500s) - benign/self-healing today; watch the rate + whether it
-   ever drops an eventual-WINNER. Lever if harmful: app `parallel` 4→3 (`models.yaml`, next launch, no server
-   restart) at a throughput cost - **arming decision for the owner.**
-4. **Telegram heartbeat 120s threshold** - a transient stall tripped a MEDIUM alert though the bot self-recovered;
-   consider requiring 2 consecutive misses before alerting.
-5. **Afternoon-momentum blind spot** (XENE +8%, DELL +3%, CPA +2.5% missed) - auditor `low_confidence` +
-   analyst_pass on eventual breakouts, same as 07-07 #3/#5. Accumulate a shadow sample; do NOT hot-fix.
-
-**Watch-items re-audited (from 07-07):**
-1. rule1 → 0 affected (stays 1/25). 2. rule2 → +BZH (3/25, still mixed). 3. **Funnel loses momentum winners
-downstream** → reinforced (XENE/DELL/CPA) but throughput was NOT binding today (1 unevaluated survivor); the loss
-is at the auditor + analyst_pass, needs a sample. 4/5/6 (observability hardening / breakout-vs-climax conjunction
-gate / low-DD watch) → carried, no new signal on a quiet day.
-
-### 2026-07-07 (Tue)
-**Day:** 118 model decisions · 3 fills (IHG, TOL, D) · 5 EOD-flat exits (ALL red). Account **−$1.27 ≈ −0.64%**
-(every lot flat into the close, no overnight carry). **Index comparison: a broadly RED, tech-led-DOWN tape - 
-SPY −0.48%, DIA −0.30%, QQQ −1.84%, IWM −0.90% - and we finished ≈ −0.64%.** We roughly TRACKED the tape (beat
-QQQ, ~matched IWM, lagged SPY/DIA) - NOT the 07-06 "red on a green tape" divergence. The real cost was
-**opportunity**: the small-cap biotech/growth sleeve RIPPED while our funnel filled 3 large-cap laggards and
-blocked/passed nearly every winner.
-
-**The day's signature - a momentum rotation we missed.** 9 names printed FRESH 52-wk highs (D, BEAM, IMVT,
-CLDX, BCRX, TRVI, ANDG, RLAY, MIRM). We bought exactly ONE - **D, the only one that reversed** - and cut it
-red; the other 8 all ran +3.8% to +8.6%. The funnel lost the winning side DOWNSTREAM of discovery (the winners
-reached the analyst - discovery worked):
-- **Analyst APPROVED → killed by gates (6 missed winners):** BCRX +7.4% & CLDX +3.4% (`granularity_wall`/
-  sizing), BEAM +5.9%, VKTX +4.2%, DELL +5.2%, SPHR +3.5% (`low_confidence`/auditor). Only M (−2.1%) = a
-  correct block.
-- **Analyst PASSED (9 missed winners):** AGIO +17.7%, NET +8.6%, TRVI +8.6%, EWTX +7.6%, VERA +7.0%,
-  ANDG +6.8%, MIRM +5.0%, RLAY +4.3%, RYTM +2.4%.
-- **Never evaluated (survivors, 4 winners):** ALMS +7.3%, NAVN +3.7%, HRMY +3.4%, BLBD +2.2%.
-
-**Orders:**
-- **IHG** momentum_continuation, entry 167.04 @10:16 → CUT −0.11% (eod_flat). Benign: clean mid-morning entry
-  on the rise (day high 167.69 printed AFTER entry), ~5% below its 52wk high. Not a misID; the −0.11% is EOD fade.
-- **TOL** pullback_in_uptrend, entry 153.59 @10:24 → CUT −0.90% (eod_flat). **Misidentified.** TOL opened at its
-  HOD (156.63) and fell all day to 151.14 - the "pullback" was a falling knife that never held (closed −2.27%).
-- **D** momentum_continuation (news=90), entry 70.18 @14:04 → CUT −0.30% (eod_flat). **Mild fresh-high reversal
-  chase.** D printed a fresh 52wk high 70.59 @10:45, reversed, and we bought at 14:04 only **0.6% below the
-  high** - a GEO-shaped climax but far milder (day still closed +0.84%). At 0.6% off-high the 3% climax guard
-  would NOT catch it (see Affected-sample).
-
-**Rejections:** discipline caught the FALLING side well - avoided 18 losers incl. ATI −4.7%, EXTR −4.2%,
-AIT −4.0%, URI −4.0%, TKR −3.0%, DKS −2.6% - but missed 15 movers (the biotech/growth rip above). The tape
-bifurcated cleanly (falling cyclicals vs ripping biotech); we were correctly OUT of the fallers and wrongly
-ABSENT from the rippers. Root cause is 100% downstream of discovery (auditor `low_confidence` ×4 winners +
-sizing `granularity_wall` ×2 winners), not discovery.
-
-**Scanner-survivor sample (10):** 4 clear wins among never-evaluated survivors on a red day - ALMS +7.3%
-(**the TOP-ranked survivor, rank0/q91.5**), NAVN +3.7% (fresh high), HRMY +3.4%, BLBD +2.2%; GTX −2.8% a
-correct skip; rest flat. The ranker/throughput cap left real edge on the table - notably ALMS was ranked #1
-yet never evaluated, hinting THROUGHPUT (not ranking) is the binding cap. Watch.
-
-**Errors found & fixed:**
-1. **Orchestrator crash + auto-restart (~14:11 ET).** An unhandled broker API-500 on `get_portfolio`
-   (`get_account`) propagated to process death; the launcher relaunched (~2-min gap where only the
-   out-of-process Guardian protected lots) and recovered to the close. Root cause: `run_loop` ran
-   `orch.run_cycle` with NO exception guard. FIXED (FIX 1). (The "15:05" file mtime is CDT-local = 16:05 ET
-   end-of-session write, NOT the restart - the restart was 14:12 ET / 13:12 CDT; mtimes are local, log stamps
-   are ET, a 1-hour offset.)
-2. **sam_gov catalyst count = 0 - NOT a lockout.** The 07-06 6h-poll fix is holding (fda=14, edgar=2 active);
-   grep confirmed zero 429s. 0 sam_gov = no new awards in the day's polls (a daily feed). No action.
-3. llama-swap :5801 proxy blip @13:03 + one glm-4.7-flash empty-completion retry - transient, self-healed. No action.
-
-**Changes applied (3 - all GO-LIVE-FIRST rule 3A: observability/reliability, NO trading-behavior change →
-validated by tests + refute, not affected-trade-gated):**
-- **FIX 1 - run_loop crash-hardening (`atlas/app.py`).** A single cycle's transient exception is logged
-  (traceback + `[cycle-error]`) and SKIPPED; the loop continues (positions stay Guardian-protected). Bounded
-  by `_MAX_CONSECUTIVE_CYCLE_ERRORS=15` → fail-loud re-raise on sustained breakage; counter resets on success.
-  Directly prevents today's crash. Tests: `test_run_loop_resilience.py` (survives single transient; survives
-  30 cycles w/ every-3rd error; fails loud at exactly 15).
-- **FIX 2 - context-drop logging (`atlas/scan/discovery.py`).** New fail-safe append-only
-  `runtime/context_drops.jsonl` of every context-gate DROP `{symbol, reason, live_price, today_high,
-  off_high%, prox_52w, chase_pct}`. Closes a real gap: context-gate guards (the ARMED `climax_reversal_guard`)
-  dropped names SILENTLY - no journal footprint - so the affected-trade tracker literally couldn't see what
-  they blocked. Mirrors the 07-06 survivor log; None-path byte-identical. Tests: 3 (generic drop; climax reason
-  captured end-to-end - also proves the guard is REACHABLE; no-write when path None).
-- **FIX 3 - sizing-reject diagnostics (`atlas/orchestrator.py`).** `rejected_proposal` now journals `detail`/
-  `binding_constraint` (the binding cap) on sizing rejects; previously only `{approved, reason}`, so /eodreport
-  could NOT tell WHICH cap floored an approved momentum name to zero (hit exactly this today on BCRX/CLDX).
-  Additive; absent when no detail. Tests: decision-level (binding cap captured) + e2e (journal carries it).
-- Suite: **685 passed, 0 failures** (was 678; +7). **Refute: skeptic-verifier FAILED-TO-REFUTE** (independently
-  re-ran the suite → 685/0/0/0; 8-input adversarial probe of the drop-logger never raised; confirmed
-  `BaseException`/Ctrl-C still propagates, the breaker re-raises the original exc, and the added journal keys
-  can't break the forward-linked hash chain). **Residual risks (observability-only, non-blocking):** (a) the
-  new append-only logs have no rotation/size cap (unbounded growth); (b) the append is not atomic/retried, so a
-  Windows sharing-violation (the WinError-5 pattern) could silently drop a row; (c) the breaker only counts
-  *raising* cycles - a non-raising "quietly dead" broker wouldn't trip it (alert_watch stall-detection partially
-  covers this). Logged as watch-item #6.
-
-**Affected-sample re-audit:**
-- **climax_reversal_guard (rule1, ARMED) - 0 affected today → stays 1/25.** No name was blocked (no
-  `climax_reversal_off_high` footprint; D, the only fresh-high buy, was 1.06% off-high < 3%). **HURT-RISK
-  flagged:** an EOD-recompute (proposal price vs the FINAL day high) puts BCRX/BEAM/CLDX in the guard's
-  ≥3%-below-fresh-high zone - and all 3 WON. The guard didn't fire on them (they became proposals, so at
-  context-eval time they weren't yet ≥3% below a fresh high - the intraday-timing subtlety), but if it starts
-  blocking such winners it's HURTing. **Could NOT positively confirm the guard is live today** (armed-but-never-
-  fired ambiguity) - FIX 2's `context_drops.jsonl` resolves this next session.
-- **climax_gap_guard (rule2, SHADOW) - 1 affected today → 2/25 (MIXED).** Recomputing ≥3%-gap-into-fresh-high
-  on today's data: only BEAM (open +3.31%, fresh high 38.26) qualifies - and BEAM WON +7.4% (**HURT** - a winner
-  it would have blocked). Sample now GEO −3.64 (HELP) + BEAM +7.39 (HURT). Accumulating; do NOT arm - this is
-  exactly the eyeballed-threshold risk it's shadowing for.
-
-**Research launched:** deep design note on distinguishing a fresh-52wk-high BREAKOUT-continuation from a CLIMAX
-reversal (grounded in O'Neil/CANSLIM climax-top, Minervini VCP/failed-breakout, Wyckoff SOS-vs-buying-climax +
-George & Hwang 2004 *JF* 52-wk-high momentum - peer-reviewed, non-reversing; daily breakouts fail ~40-50%,
-30-40% with volume confirmation). **Verdict:** the blunt "≥3%-below-fresh-high" veto is directionally right but
-should evolve into a **CONJUNCTION gate** - the canonical discriminator across all three schools is
-**`close_in_range` (Wyckoff SOS ≥ ~0.6 vs buying-climax lower-half) + non-climactic volume expansion** (RVOL
-elevated but NOT top-percentile), with extension (prior 25-50%/1-3wk run, distance-above-MA) and base/pivot
-quality as context. Rules 1-3 are canonical fundamentals (rule-3B-eligible once built); Rules 4-5 (gap
-character, VCP base) are eyeballed → validate-first. This is the concrete design for the deferred swing-pivot /
-inverted-U-`prox_52w` structural fix - a dedicated build (needs calibration), NOT a rushed constant.
-
-**Watch-items opened (re-audit next run):**
-1. **rule1 (climax_reversal_guard) affected sample (1/25)** - now `context_drops.jsonl` (FIX 2) is live, add
-   every real `climax_reversal_off_high` block + true outcome. WATCH the HURT-risk (BCRX/BEAM/CLDX winners sit
-   in the guard's zone on an EOD-recompute). Confirm the guard actually FIRES (resolve armed-but-never-fired).
-2. **rule2 (climax_gap_guard) shadow (2/25, MIXED)** - keep recomputing; the one live datapoint (BEAM +7.4%)
-   is a HURT. Do not arm.
-3. **Funnel loses momentum winners downstream (the day's big finding)** - approved winners die at the auditor
-   (`low_confidence`) and sizing (`granularity_wall`); the analyst PASSES on many breakouts. NEEDS A SAMPLE,
-   not n=1. FIX 2 & FIX 3 now instrument BOTH loss points - accumulate before ANY change to the auditor
-   threshold or sizing (both are curve-fit traps on one momentum-rotation day). Diagnose: are `granularity_wall`
-   rejects mostly late-day BUDGET exhaustion (→ fund the best names earlier; cf. the live-queue re-ranker idea)
-   vs concentration caps? (FIX 3 makes this answerable next run.)
-4. **Build the breakout-vs-climax CONJUNCTION gate** (from the research note): `close_in_range` +
-   non-climactic-volume as the primary discriminator, augmenting/replacing the blunt 3% veto. Canonical
-   structure (3B) but thresholds need calibration → dedicated build + validate-first. May require adding a
-   `close_in_range` + prior-run-extension feature.
-5. **Auditor `low_confidence` on fresh-high momentum** - killed 4 winners (VKTX/BEAM/SPHR/DELL) + 1 correct (M)
-   today. The auditor is a TRUSTED gate; do NOT loosen on n=1. Accumulate a shadow sample (which low_confidence
-   vetoes would have won) before touching it.
-6. **Observability hardening (from refute residual risks)** - add rotation/size-cap to `context_drops.jsonl` +
-   `discovery_survivors.jsonl`; make their append atomic/retried (reuse `atlas/fsutil.atomic_replace` pattern)
-   to avoid silent row-loss under Windows contention; consider an exception-independent liveness check (the
-   15-error breaker only counts RAISING cycles). Also: teach `eod_extract.py` to read `context_drops.jsonl` and
-   surface the climax-guard blocked cohort (like it does survivors) so Phase 8 auto-populates rule1's sample.
-
-**Watch-items re-audited (from 07-06):**
-1. rule1 validation → done (0 affected, stays 1/25; HURT-risk flagged).
-2. rule2 shadow → done (2/25, MIXED, BEAM HURT).
-3. **Low-beta-on-green-tape underperformance → PARTIALLY RESOLVED:** today the tape was RED and we ~tracked it
-   (−0.64% vs SPY −0.48%/QQQ −1.84%), so it's NOT a consistent "we lag strong tapes" pattern. The real,
-   direction-INDEPENDENT issue is that we're not positioned in the momentum leaders (funnel loses them
-   downstream - watch-item #3). n=2, keep tracking.
-4. Survivor logging → confirmed WORKING (10 surfaced today; 4 winners found).
-5. Swing-pivot S/R build → SUBSUMED by the research note + watch-item #4 (breakout-vs-climax conjunction gate is
-   the concrete design).
-
-### 2026-07-06 (Mon)
-**Day:** 47 model decisions · 3 fills (GEO, ARR, BNS) · 1 exit. Account ≈ **−0.38%** (GEO −$1.80 realized;
-ARR +$0.20, BNS +$0.07 held). **Index comparison: the tape was GREEN and tech-led - SPY +0.88%, DIA +0.40%,
-QQQ +1.41% - and we finished RED.** We underperformed a broad rally: the one momentum name we bought
-aggressively was a climax reversal (the loss), and our two holds (ARR, a mortgage REIT; BNS, a Canadian
-bank) are low-beta/defensive and barely participated in the QQQ-led move.
-
-**Orders:**
-- **GEO** momentum_continuation, entry 30.98 @10:06 → **CUT −3.64% / −$1.80** (eod_flat). **Misidentified.**
-  GEO gapped **+6.1% at the open** and printed its **52-wk high 32.25 in the first 30 seconds**, reversed
-  −8.3% to 29.59 by 9:44, and we bought the failing bounce at 30.98 (3.94% below the fresh high). Of all 21
-  names it was the ONLY one to make a new 52-wk high and had the worst close-vs-high reversal (7.8%). A
-  classic gap-up-into-fresh-high climax bought on the reversal.
-- **ARR** pullback_in_uptrend, 17.11 → HELD +0.4%. Calm mid-range REIT, fine.
-- **BNS** momentum_continuation, 86.91 → HELD +0.15%. Orderly mega-cap near a *stale* (2-wk-old) high, fine.
-
-**Rejections:** discipline was NET-GOOD. Avoided 8 losers [DKS −3.0, SXI −2.5, CVCO −2.1, SHO −1.8,
-WSM −1.7, DHI −1.1, MMM −0.8, IMO −0.7]. Missed 3 movers [BBAR +6.9, UGP +6.5, S +3.6] - S and GRC were
-analyst *enters* killed downstream by low-confidence / a 219 bps spread gate (both defensible blocks). No
-evidence of a systematic edge left on the table in the rejections.
-
-**Scanner-survivor sample:** not run this entry (07-06 was a manual retro, not a full /eodreport pass;
-survivor logging to audit against was not captured). Watch-item opened to wire it up.
-
-**Errors found & fixed:** **SAM.gov 429 all-day lockout.** The award feed (updates ~daily) was polled every
-10 min, exhausting the free key's small daily quota; the 3-fail/15-min breaker then re-hammered 429s the
-rest of the day. Root-caused + fixed: per-feed `min_interval_seconds` (SAM default 6h via
-`sam_gov.min_poll_interval_hours`) + a 429 opens a long cooldown immediately instead of the 15-min retry
-loop (`atlas/collect/catalysts.py`, `atlas/app.py`). EDGAR/other feeds untouched. 20 tests (6 new); full
-suite green.
-
-**Changes applied:**
-- **`climax_reversal_guard` (rule1) - ARMED go-live-first (rule 3B / structural).** Blocks a momentum/
-  breakout entry bought ≥3% below a fresh 52-wk high (the GEO pattern) - a Wyckoff/O'Neil fundamental, and
-  structurally it closes the existing chase-cap's direction-blind bypass (the cap only blocks *above* the
-  pivot). Validation: 8 tests prove default-off is byte-identical, it blocks GEO (`climax_reversal_off_high`)
-  and spares BNS (stale high) + the C pullback; end-to-end verified through the real `scanner.yaml`.
-  Effective next launch. `atlas/scan/context.py`. Registered with the affected-trade tracker (1/25).
-- **`climax_gap_guard` (rule2) - BUILT, validate-first (default OFF/shadow).** ≥3% gap into a fresh high;
-  the +3% is eyeballed, so it accumulates its shadow affected-sample before arming.
-- **SAM.gov fix - shipped ON, go-live-first (rule 3A).** Strictly-dominant reliability fix, no
-  trading-behavior change → validated by tests, not an affected-trade sample.
-- Full suite: **670 passed, 0 failures.** A fresh-context skeptic **FAILED-TO-REFUTE** (6,000-iter fuzz
-  confirmed the guard is byte-identical when off; all 12 catalyst feeds checked - only SAM.gov throttled).
-
-**Affected-sample re-audit:** seeded `docs/eod_change_samples.json` - climax_reversal_guard blocked cohort
-= 1/25 (GEO −3.64%, a correct block). `climax_gap_guard` 0/25. Both `accumulating` - no verdict until 25
-affected decisions.
-
-**Research launched:** a 3-lens expert panel (O'Neil/Minervini growth-momentum · Wyckoff/classical S/R ·
-quant/anti-overfitting) validated the S/R + 52-wk-high logic. Unanimous verdicts: **S/R identification is
-structurally wrong** - no swing-pivot / consolidation / volume-by-price levels; only MA proxies (the "real
-support" for GEO, ~29.1 swing low, was never computed). **52-wk-high usage is inverted** - `prox_52w` scored
-linearly, maxing AT the high (highest score where climax risk is highest). The real structural fix (build
-genuine swing-pivot support + an inverted-U `prox_52w` conditioned on base quality) is deferred to a
-dedicated deep-research + build - it needs calibration, not a rushed constant.
-
-**Watch-items opened (re-audit next run):**
-1. **rule1 affected-trade validation** - armed go-live-first; accumulating its sample (1/25 = GEO −3.64%, a
-   correct block). Each run, add every `climax_reversal_off_high` block + the near-boundary *kept* names,
-   with true outcomes, via `eod_change_tracker.py`. At 25 affected → HELP (blocked cohort loses → mark
-   VALIDATED), HURT (killing winners - O'Neil's best names ride repeated new highs → revert/loosen), or
-   TWEAK (move the 3% to where the blocked losers cluster). Judged on affected-trade count, not days.
-2. **`climax_gap_guard` (rule2)** - accumulate its shadow affected-sample (recompute the ≥3%-gap-into-fresh-
-   high condition on each run's fetched data); arm once the sample shows HELP.
-3. **Low-beta-on-a-green-tape underperformance** - we were red on a +0.9%/+1.4% day. Track account
-   participation vs SPY/QQQ; if we systematically lag strong tapes, investigate whether the pullback/
-   defensive bias is mis-fit to up-trending regimes. Needs its own sample - not n=1.
-4. **Wire scanner-survivor logging - DONE 2026-07-06.** Built `runtime/discovery_survivors.jsonl`
-   (append-only, fail-safe) in `atlas/scan/discovery.py`; `eod_extract.py` now diffs it against the
-   evaluated set to surface surfaced-but-never-evaluated names. Effective next launch → Phase 6 gets a real
-   sample from tomorrow (the 07-06 dry run could only recover n=1 from the EOD-residual organizer pool).
-5. **Swing-pivot-S/R build** - the real structural fix for the S/R blind spot; deep-research + build (a
-   rule 3B fundamental once designed), don't rush a constant.
-
-**Watch-items re-audited:** none (first entry).
+*Entries for 2026-07-06 through 2026-07-08 covered the retired equity system running on a live
+brokerage account; they are omitted from the public copy. The behavior changes armed on those dates
+remain in the Change ledger above, which is the part with engineering value.*

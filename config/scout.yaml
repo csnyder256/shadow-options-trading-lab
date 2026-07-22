@@ -1,6 +1,6 @@
 # Scout stage - real-time pre-screen config. Active ONLY when atlas is run with `--scout` (default off,
 # so the existing live path is unchanged). Serving (model/gguf/instances) is in models.yaml roles.scout
-# + config/llama-swap.yaml; this file holds the BEHAVIOR. See .claude/plans/harmonic-moseying-bumblebee.md.
+# + config/llama-swap.yaml; this file holds the BEHAVIOR.
 version: 0.1
 modality: vision                # mirror of models.yaml roles.scout.modality (text | vision)
 

@@ -69,8 +69,7 @@ buckets_*.txt
 *.tmp
 *.swp
 
-# ── machine / agent state (also add to .git/info/exclude locally) ───
-.claude/
+# ── editor / OS state ───
 .DS_Store
 Thumbs.db
 .idea/

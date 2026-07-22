@@ -29,7 +29,7 @@ accordingly: from FILTERING trades to SENSING, REMEMBERING, and NARRATING.**
    validation against closed enums; a classifier may never mint a ticker that was not in its
    input. **Public market data only to cloud models** (headlines, symbols, calendars,
    prior-day stats - never positions, P&L, sizing, or strategy internals). Anything touching
-   positions/P&L runs on LOCAL models (127.0.0.1:8080) or Claude, exclusively.
+   positions/P&L runs on LOCAL models (127.0.0.1:8080), exclusively.
 
 5. **Ops law.** AI side-processes write their OWN append-only files (the shadow's
    single-writer ledgers are untouchable); no second process shares a Tradier token; the exit
@@ -38,13 +38,12 @@ accordingly: from FILTERING trades to SENSING, REMEMBERING, and NARRATING.**
    "WHEN we mark, never WHAT we do"); every AI component pre-registers in
    `runtime/backtest_out/sweep_ledger.jsonl` before first effect.
 
-## The three engines and their roles
+## The two engines and their roles
 
 | Engine | When | Role |
 |---|---|---|
 | **Cloud free tiers** (groq fast-lane; openrouter/cerebras/zai batch; gemini excluded from fast tasks) | premarket crew fan-out; intraday headline classification (groq); weekly peer-map batch | public-data sensing at near-zero latency/cost |
 | **Local models** (GLM-4.7-Flash, Qwen3-30B-Thinking, scouts - the owner's 24/7 rig) | RTH: warm fallback for the headline classifier (GLM resident, scouts cold). Overnight: catalyst tagging, exit-quality narratives, anomaly answering, memory curation inputs | the sovereign engine - unlimited, private, allowed to see P&L |
-| **Claude (owner's plan)** | nightly `/eodreport` (17:00 CT, report-and-propose mode); weekly deep-research + memory curation; supervised one-shots | the highest-reasoning tier - turns evidence into graded knowledge without depending on the owner's evening energy |
 
 ## Standing rejections (do not re-propose without NEW evidence)
 
@@ -65,4 +64,3 @@ SQLite suffices.
 | Catalyst memory store + recall | 0 → 1 (briefing) planned | opts-catmem-store-v1 |
 | IV surface collector | 0 (evidence factory; unblocks IV-rank/skew/GEX covariates ~mid-Sep) | opts-iv-surface-v1 |
 | Overnight lab jobs A–D | 0 (narration/tagging, feeds /eodreport) | opts-lab-jobs-v1 |
-| Autonomous Claude J1–J3 | meta (propose-mode; writes proposals, never decision code) | opts-auto-claude-v1 |

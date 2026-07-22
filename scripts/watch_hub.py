@@ -313,7 +313,7 @@ def _salvage_rows(line: str) -> list:
 def _salvage_scan_ts(state: State, line: str) -> None:
     """A run_scan line whose payload was TRUNCATED in the log still carries ts/scan_id/total_items at the
     FRONT and the COMPLETE rows before the cut. Recover them so the panel stays CURRENT (fresh ts + count +
-    the survivors we can parse) instead of silently freezing. See rh_mcp_client's line cap."""
+    the survivors we can parse) instead of silently freezing. See the MCP client's line cap."""
     import re
     if '"run_scan"' not in line:
         return
@@ -1157,20 +1157,16 @@ function renderNav(){let h='';for(const [id,lbl] of TABS){const n=id==='decision
 function setTab(t){activeTab=t;render();} window.setTab=setTab;
 
 function viewRisk(){
-  // The risk controls live in the write-capable control plane on :8771 (clamped to survival rails +
-  // audited). We EMBED it here so the hub gains a Risk tab without the read-only hub itself ever taking
-  // a write path. Built ONCE and preserved across polls (see render) so the iframe doesn't reload/lose
-  // form state every ~2s.
-  return '<div style="margin-bottom:8px;color:#8aa0bb;font-size:12px">Risk &amp; control settings &middot; '
-    +'changes apply on the <b>next launch</b> (clamped to survival rails &amp; audited; persisted in '
-    +'runtime/control_overlay.json). Served by the control plane on :8771 &mdash; if this panel is blank, '
-    +'it isn\'t running (start via launch_live_day.ps1 or open_hub.ps1).</div>'
-    +'<iframe id="riskframe" src="http://127.0.0.1:8771/" title="Risk controls" '
-    +'style="width:100%;height:78vh;border:1px solid #2a3344;border-radius:8px;background:#fff"></iframe>';}
+  // The write-capable risk control plane is a separate process that is NOT part of this copy, so the
+  // hub stays strictly read-only: no iframe, no write path, no dead panel.
+  return '<div style="margin-bottom:8px;color:#8aa0bb;font-size:12px">Risk &amp; control settings are '
+    +'read from <b>config/risk_limits.yaml</b> and apply on the <b>next launch</b>. The write-capable '
+    +'control plane is a separate process and is not part of this copy, so this hub is strictly '
+    +'read-only.</div>';}
 
 function render(){if(!D)return;renderHeader(D.header||{},D.meta||{});renderNav();
   const el=document.getElementById('content');
-  if(activeTab==='risk'){if(!document.getElementById('riskframe'))el.innerHTML=viewRisk();return;}
+  if(activeTab==='risk'){el.innerHTML=viewRisk();return;}
   const sy=el.scrollTop;let h='';
   if(activeTab==='decisions')h=viewDecisions(D.decisions);
   else if(activeTab==='scans')h=viewScans(D.scans, D.recent_survivors||[]);

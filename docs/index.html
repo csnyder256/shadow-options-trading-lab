@@ -167,7 +167,7 @@
       <span class="chip hot">Shadow mode, no orders</span>
       <span class="chip">20 strategies armed</span>
       <span class="chip">Python 3.14</span>
-      <span class="chip">731 tests passing</span>
+      <span class="chip">726 tests passing</span>
       <span class="chip">Work in progress</span>
     </div>
     <div class="cta">
@@ -204,7 +204,8 @@
 <pre><code># tests/test_keep_imports.py::test_no_order_machinery_reachable_from_options
 banned = [b for b in ('atlas.execution.order_lifecycle',
                       'atlas.execution.broker_adapter', 'atlas.execution.guardian',
-                      'atlas.execution.robinhood_adapter', 'atlas.orchestrator', 'atlas.app')
+                      'atlas.execution.robinhood_adapter', 'atlas.execution.rh_mcp_client',
+                      'atlas.orchestrator', 'atlas.app')
           if b in sys.modules]
 assert not banned, f'order machinery reachable: {banned}'</code></pre>
     <p style="margin-top:1.05rem">The subprocess is the load-bearing part. Inside a shared pytest process, <code>sys.modules</code> is polluted by whatever a sibling test imported first, so the same check would pass vacuously.</p>
@@ -242,7 +243,7 @@ assert not banned, f'order machinery reachable: {banned}'</code></pre>
   <div class="wrap">
     <p class="kicker">Architecture</p>
     <h2>Two shadow engines, side by side</h2>
-    <p>The main options shadow runs five lane classes into a contract selector with roughly 17 hard gates and an expected-value stage. The strategy lab runs twenty published strategies against a shared quote hub under a rolling-minute budget governor. Both write into the same three-ledger shadow record, and both feed the nightly grader.</p>
+    <p>The main options shadow runs five lane classes into a contract selector with 20 hard gates and an expected-value stage. The strategy lab runs twenty published strategies against a shared quote hub under a rolling-minute budget governor. Both write into the same three-ledger shadow record, and both feed the nightly grader.</p>
 
     <div class="tablewrap">
       <table>
@@ -257,7 +258,7 @@ assert not banned, f'order machinery reachable: {banned}'</code></pre>
       </table>
     </div>
 
-    <p>The exit ladder carries a standing prohibition: no rule may fire on a premium threshold. What you paid is not evidence about what the contract is worth. Where AI appears at all, it appears at the edges: free-tier cloud models propose a premarket watchlist, their replies pass a drop-never-repair allowlist, and nothing under <code>atlas/options/</code> references a model or a provider. The live decision path is pure math.</p>
+    <p>The exit ladder carries a standing prohibition: no rule may fire on a premium threshold. What you paid is not evidence about what the contract is worth. Where AI appears at all, it appears at the edges: free-tier cloud models propose a premarket watchlist, their replies pass a drop-never-repair allowlist, and no module under <code>atlas/options/</code> imports or calls a model or a provider. The only LLM-derived data reaching the options package is a news-flag tail read as a graded entry covariate and a re-mark cadence trigger; it gates nothing and never enters an EV or probability computation. The live decision path is pure math.</p>
   </div>
 </section>
 
@@ -271,7 +272,7 @@ assert not banned, f'order machinery reachable: {banned}'</code></pre>
 
 # Nothing here touches a broker or the network.
 .venv\Scripts\python.exe -m pytest -q
-# 736 tests: 731 pass, 5 skip (live-deployment canaries)</code></pre>
+# 731 tests: 726 pass, 5 skip (live-deployment canaries)</code></pre>
     <p style="margin-top:1.05rem">Live-data loops need your own Tradier token in <code>config/tradier.local.yaml</code>. Tradier is the only feed the live loop actually needs. Alpaca, Finnhub and the cloud-model keys are optional, and every source fails open. <code>runtime/</code> is gitignored and created on first run, so a clone starts without it.</p>
   </div>
 </section>

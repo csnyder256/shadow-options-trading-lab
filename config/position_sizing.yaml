@@ -24,9 +24,9 @@ sizing:
 # Tier ladder. Tier chosen on end-of-day settled equity with hysteresis (see transitions).
 tiers:
   - name: tier1_experimental
-    equity_min: 0                    # was 250 (2026-07-03): the account sat at $199.99 after a withdrawal,
-                                     # BELOW the lowest band - tier_for_equity() fell back to tiers[0]
-                                     # anyway, so behavior is unchanged; the config now says so truthfully.
+    equity_min: 0                    # was 250 (2026-07-03): equity can sit BELOW the lowest band, in which
+                                     # case tier_for_equity() falls back to tiers[0] anyway, so behavior is
+                                     # unchanged; the config now says so truthfully.
     equity_max: 1000
     mode: aggressive_experimental
     max_position_pct: 16             # 2026-07-03 (was 21, before that 33): the 8-slot shape - 8 slots x 16%

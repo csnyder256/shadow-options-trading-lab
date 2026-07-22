@@ -1,6 +1,6 @@
 # Strategy Brief: atm_calendar_low_iv
 
-Research date: 2026-07-19. Researcher: Claude (subagent). All page-anchored quotes below were
+Research date: 2026-07-19. All page-anchored quotes below were
 read directly from full-text scans of the cited editions (archive.org OCR text, downloaded and
 grepped locally this session) - none are from memory. Quotes are kept to short fragments;
 locators (edition + printed page) are given so any quote can be re-verified.
