@@ -2,6 +2,7 @@
 
 **Live-data options strategies that trade on paper only, graded on the worst fill they could have gotten.**
 
+[![ci](https://github.com/csnyder256/shadow-options-trading-lab/actions/workflows/ci.yml/badge.svg)](https://github.com/csnyder256/shadow-options-trading-lab/actions/workflows/ci.yml)
 ![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.14-3776AB?style=flat-square&logo=python&logoColor=white)
 ![Tests](https://img.shields.io/badge/tests-726%20passing%20%2F%205%20skipped-brightgreen?style=flat-square)
