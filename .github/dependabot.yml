@@ -1,10 +1,12 @@
 # Keep CI actions and pip deps patched. CI runs the full offline suite on
 # every Dependabot PR.
 #
-# requirements.txt is deliberately unpinned today, and Dependabot only
-# proposes bumps for pinned or ranged requirements, so the pip entry stays
-# quiet until something is pinned. Security alerts do not depend on it.
-# Routine bumps are grouped: one PR per ecosystem per week.
+# requirements.txt and requirements-backtest.txt use open floors (>=) or no
+# constraint at all, so pip already installs the newest compatible release.
+# increase-if-necessary stops Dependabot from raising those floors on every
+# release, which changes nothing that gets installed; it still opens a PR
+# when a release falls outside an allowed range. Routine bumps are grouped:
+# one PR per ecosystem per week.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
@@ -19,6 +21,7 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    versioning-strategy: increase-if-necessary
     groups:
       pip-minor-and-patch:
         update-types: ["minor", "patch"]
