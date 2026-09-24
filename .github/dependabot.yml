@@ -1,0 +1,8 @@
+# Managed by Orpheus-agent (autonomous maintenance PR, 2026-09-14)
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
