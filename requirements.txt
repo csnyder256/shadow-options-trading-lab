@@ -4,7 +4,7 @@
 # your own small unit-tested functions" - better reproducibility than any TA library).
 numpy
 pandas
-pydantic>=2
+pydantic>=2.13.5
 PyYAML
 jsonschema
 
