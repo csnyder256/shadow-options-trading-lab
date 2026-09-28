@@ -54,7 +54,12 @@ def aggregate(positions_by_strategy: dict, spots: dict | None = None) -> dict:
     if gross_d > 0 and abs(net_d) / gross_d >= CONC_NET_GROSS:
         flags.append(f"CONCENTRATED: |net|/gross delta$ = {abs(net_d) / gross_d:.2f} >= {CONC_NET_GROSS}")
     for u, blk in per_u.items():
-        if gross_d > 0 and blk["gross_delta_dollars"] / gross_d >= CONC_TOP_UNDERLYING and len(per_u) > 1:
+        # The share test is per-underlying and needs NO cross-underlying guard: a book that
+        # trades ONE underlying carries 100% of its gross delta$ in it, which is the most
+        # concentrated shape there is. The old `len(per_u) > 1` guard suppressed the flag in
+        # exactly that case (the module's own headline "20 strategies long SPY is ONE bet")
+        # while a single token IWM position elsewhere in the book made it reappear.
+        if gross_d > 0 and blk["gross_delta_dollars"] / gross_d >= CONC_TOP_UNDERLYING:
             flags.append(f"CONCENTRATED: {u} carries {blk['gross_delta_dollars'] / gross_d:.0%} of gross delta$")
         for side, key in (("long", "strategies_long"), ("short", "strategies_short")):
             if len(blk[key]) >= CONC_SAME_SIGN_N:

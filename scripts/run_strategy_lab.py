@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 import time
@@ -42,9 +43,10 @@ from atlas.strategy_lab.hub import MarketHub  # noqa: E402
 from atlas.strategy_lab.ledger import LabLedger, LedgerUnreadable  # noqa: E402
 from atlas.strategy_lab.model import (LegSpec, build_combo_entry_record,  # noqa: E402
                                       build_combo_exit_record, build_combo_mark_record,
-                                      combo_from_entry, combo_net_open, leg_open_fills)
+                                      combo_from_entry, combo_net_open, intrinsic,
+                                      leg_open_fills)
 from atlas.strategy_lab.registry import armed_roster, build_all, load_state, validate  # noqa: E402
-from atlas.strategy_lab.settlement import expired_legs, pin_risk_flags, settlement_fills  # noqa: E402
+from atlas.strategy_lab.settlement import expired_legs, pin_risk_flags  # noqa: E402
 from atlas.strategy_lab.strategy import EventPolicy, StrategyContext, expiry_backstop_due  # noqa: E402
 
 NY = ZoneInfo("America/New_York")
@@ -53,6 +55,10 @@ NY = ZoneInfo("America/New_York")
 LAB_CAP_PER_MIN = 40                 # PERMANENT shared-token slice - see module docstring
 QUARANTINE_ERRORS_PER_DAY = 5
 HEARTBEAT_SCHEMA = 2
+# Extra calendar days requested on top of an expiry's age when fetching its daily-history bar,
+# so a weekend/holiday run of non-trading days around the expiry cannot push it out of window.
+SETTLE_HISTORY_PAD_DAYS = 10
+LATE_TICK_GRACE_MIN = 20             # ticks continue this far past the latest options close
 
 
 def _paths(runtime_dir: Path) -> dict:
@@ -180,39 +186,131 @@ class StrategyLabCore:
                  f"{sum(1 for v in self.positions.values() if v)} strategies")
 
     def _expiry_close_S(self, underlying: str, expiry_iso: str) -> float:
+        """Expiry-day underlying close, 0.0 when unavailable (legacy sentinel; callers that
+        must distinguish 'no bar' from 'priced' use _expiry_close_for)."""
+        px = self._expiry_close_for(underlying, date.fromisoformat(expiry_iso))
+        return float(px) if px is not None else 0.0
+
+    def _expiry_close_for(self, underlying: str, expiry: date) -> float | None:
+        """Underlying close on `expiry` for THIS leg, or None when the bar is not retrievable.
+
+        Multi-expiry combos need each expired leg priced at ITS OWN expiry-day close: the ATM
+        calendar's front and back legs die weeks apart, so a single close is a fabricated price
+        for whichever leg did not expire that day. Lookback is sized from the expiry's calendar
+        age (the Tradier daily-history `days` argument is calendar days, ~1.6x for bars), so an
+        old front expiry is actually reachable instead of silently missing - and when the bar
+        still cannot be fetched, None defers the settlement rather than inventing a price. A
+        month-old front expiry may simply be beyond the provider's history, so 'deferred' is a
+        real terminal state here, not a guarantee that the position eventually settles."""
         if self.hub is None:
-            return 0.0
-        for bar in self.hub.daily_history(underlying, days=10):
-            if str(bar.ts)[:10] == expiry_iso:
-                return float(bar.close)
-        return 0.0
+            return None
+        today = self.now_fn().date()
+        age_days = max(1, (today - expiry).days)
+        window = int(age_days * 1.6) + SETTLE_HISTORY_PAD_DAYS
+        iso = expiry.isoformat()
+        for bar in self.hub.daily_history(underlying, days=window):
+            if str(bar.ts)[:10] == iso:
+                try:
+                    close = float(bar.close)
+                except (TypeError, ValueError):
+                    return None
+                return close if math.isfinite(close) and close > 0 else None
+        return None
 
     def _settle_expired(self, day: str) -> None:
-        """Expiry is a first-class lifecycle event: combos whose nearest leg expired settle at
-        intrinsic vs the expiry-day close (all three ledgers equal by construction)."""
+        """Expiry is a first-class lifecycle event: a combo whose legs expired settles at
+        intrinsic against the expiry-day close (all three ledgers equal by construction).
+
+        Only legs that actually EXPIRED settle at intrinsic (opts-fix-lab-partial-settlement-v1).
+        A multi-expiry combo - the ATM calendar is the one armed shape - can reach the day-roll
+        with its front leg expired, because the lab is a supervised process: a crashed, aborted
+        or simply unlaunched session is enough for the front month to die while the position is
+        still on the books. Settling EVERY leg at intrinsic then invents a close for a back month
+        with weeks of life left, and writes that fabricated P&L into the ledger the entire
+        evidence base is graded from. `build_combo_exit_record` already supports the mixed form
+        through per-occ `fills_override`; the runner only has to pass the expired legs as the
+        override and the surviving legs as their last observed NBBO.
+
+        opts-fix-lab-multi-expiry-prices-v1: every expired leg is priced at ITS OWN expiry-day
+        close. Two differently expired calendar legs die on different days with different closes,
+        so pricing them all off one close - the latest expiry's - is the same fabrication in
+        smaller clothes. Any missing required price (a leg's own expiry-day close, or a live leg
+        with no quote on file) defers the settlement (journaled) rather than guessing. The
+        position stays open and is re-attempted every day-roll; a leg whose expiry-day history
+        the provider can no longer serve keeps deferring - settlement is NOT guaranteed."""
         today = date.fromisoformat(day)
         for sid, poss in self.positions.items():
             for pos in list(poss):
                 exp_legs = expired_legs(pos, today - timedelta(days=1))
                 if not exp_legs:
                     continue
-                exp = max(ls.spec.expiry for ls in exp_legs)
-                S = self._expiry_close_S(pos.underlying, exp.isoformat())
-                if S <= 0:
+                exp_occs = {ls.spec.occ for ls in exp_legs}
+                # each expired leg prices off its OWN expiry-day underlying close
+                expiry_px: dict[str, float] = {}
+                missing_exp: list[str] = []
+                for ls in exp_legs:
+                    px = self._expiry_close_for(pos.underlying, ls.spec.expiry)
+                    if px is None:
+                        missing_exp.append(ls.spec.occ)
+                    else:
+                        expiry_px[ls.spec.occ] = px
+                if missing_exp:
                     self.ledger.strategy(sid).journal(
                         {"event": "settlement_deferred", "ts_epoch": time.time(),
-                         "position_id": pos.position_id, "detail": "no expiry close price yet"})
+                         "position_id": pos.position_id, "expired": sorted(exp_occs),
+                         "missing_expiry_close": sorted(missing_exp),
+                         "detail": "expiry-day underlying close unavailable for an expired leg; "
+                                   "refusing to fabricate a settlement price"})
                     continue
-                fills = settlement_fills(pos, S)
+                fills = {}
+                for ls in exp_legs:
+                    fills[ls.spec.occ] = round(
+                        intrinsic(ls.spec.opt_type, ls.spec.strike, expiry_px[ls.spec.occ]), 4)
+                legs_close = []
+                live_missing = False
+                live_quote_ages: dict[str, float] = {}
+                for ls in pos.legs:
+                    if ls.spec.occ in exp_occs:
+                        legs_close.append({"occ": ls.spec.occ, "bid": 0.0, "ask": 0.0})
+                        continue
+                    nb = self.hub.last_nbbo(ls.spec.occ) if self.hub is not None else None
+                    if (nb is None or len(nb) < 3 or not all(
+                            isinstance(v, (int, float)) and math.isfinite(v) for v in nb[:3])
+                            or not 0 <= nb[0] <= nb[1] or nb[1] <= 0 or nb[2] < 0):
+                        live_missing = True
+                        break                      # a live leg with no quote - never guess
+                    live_quote_ages[ls.spec.occ] = nb[2]
+                    legs_close.append({"occ": ls.spec.occ, "bid": nb[0], "ask": nb[1]})
+                if live_missing:
+                    self.ledger.strategy(sid).journal(
+                        {"event": "settlement_deferred", "ts_epoch": time.time(),
+                         "position_id": pos.position_id, "expired": sorted(exp_occs),
+                         "detail": "live leg has no valid NBBO with quote age on file; intrinsic applies to "
+                                   "expired legs only"})
+                    continue
+                # the record's headline S/pin_risk use the LATEST expiry (the last leg to die);
+                # per-leg prices ride in state.settle_prices so the record is self-describing.
+                last_exp = max(ls.spec.expiry for ls in exp_legs)
+                S = expiry_px[next(ls.spec.occ for ls in exp_legs if ls.spec.expiry == last_exp)]
                 rec = build_combo_exit_record(
                     ts=time.time(), day=day, pos=pos, rule="expiry_settlement",
-                    legs_close=[{"occ": ls.spec.occ, "bid": 0.0, "ask": 0.0} for ls in pos.legs],
-                    S=S, state={"settle_S": S, "expiry": exp.isoformat(),
-                                "pin_risk": pin_risk_flags(pos, S, exp)},
-                    hold_trading_days=self._hold_days(pos), fills_override=fills)
+                    legs_close=legs_close,
+                    S=S, state={"settle_S": S, "expiry": last_exp.isoformat(),
+                                "pin_risk": pin_risk_flags(pos, S, last_exp),
+                                "settled_legs": sorted(exp_occs),
+                                "live_leg_quote_ages_s": live_quote_ages,
+                                "settle_prices": {occ: round(px, 4)
+                                                  for occ, px in sorted(expiry_px.items())},
+                                "live_legs_at_last_nbbo": sorted(
+                                    ls.spec.occ for ls in pos.legs
+                                    if ls.spec.occ not in exp_occs)},
+                    hold_trading_days=self._hold_days(pos),
+                    fills_override=fills)
                 self.ledger.strategy(sid).write_exit(rec)
                 poss.remove(pos)
-                self.log(f"settled {pos.position_id} at S={S} intrinsic")
+                self.log(f"settled {pos.position_id} "
+                         f"({len(exp_occs)}/{len(pos.legs)} legs expired, "
+                         f"per-expiry closes {sorted(round(px, 4) for px in expiry_px.values())})")
 
     # -- helpers -----------------------------------------------------------
     @staticmethod
@@ -397,7 +495,16 @@ class StrategyLabCore:
             self.write_heartbeat()
             return
         close_min = session_close_minute(today)
-        if minute < 570 or minute > close_min + 20:
+        # The tick gate is per-UNDERLYING, not per-calendar-day. Index ETFs (SPY/QQQ/IWM/DIA)
+        # keep quoting to close+15 (options_close_minute) and every one of the ETF-only
+        # strategies owns that window; a name-blind gate on session_close_minute derived its
+        # 20-minute grace from the 960 equity close while ctx.session_close_min - built below
+        # from the strategy's OWN universe - said 975. The two bounds now come from the same
+        # source, so the gate can never under-reach the window it is supposed to cover.
+        latest_options_close = max(
+            [close_min] + [options_close_minute(today, u) for sid_ in self.armed
+                           for u in self.strategies[sid_].META.universe])
+        if minute < 570 or minute > latest_options_close + LATE_TICK_GRACE_MIN:
             self.write_heartbeat()
             return
 
