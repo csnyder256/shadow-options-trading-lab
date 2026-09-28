@@ -188,8 +188,20 @@ class StrategyLabCore:
         return 0.0
 
     def _settle_expired(self, day: str) -> None:
-        """Expiry is a first-class lifecycle event: combos whose nearest leg expired settle at
-        intrinsic vs the expiry-day close (all three ledgers equal by construction)."""
+        """Expiry is a first-class lifecycle event: a combo whose legs expired settles at
+        intrinsic against the expiry-day close (all three ledgers equal by construction).
+
+        Only legs that actually EXPIRED settle at intrinsic (opts-fix-lab-partial-settlement-v1).
+        A multi-expiry combo - the ATM calendar is the one armed shape - can reach the day-roll
+        with its front leg expired, because the lab is a supervised process: a crashed, aborted
+        or simply unlaunched session is enough for the front month to die while the position is
+        still on the books. Settling EVERY leg at intrinsic then invents a close for a back month
+        with weeks of life left, and writes that fabricated P&L into the ledger the entire
+        evidence base is graded from. `build_combo_exit_record` already supports the mixed form
+        through per-occ `fills_override`; the runner only has to pass the expired legs as the
+        override and the surviving legs as their last observed NBBO. A live leg with no quote on
+        file defers the settlement (journaled) rather than guessing a price - the position stays
+        open, is re-attempted every day-roll, and settles cleanly once every leg has expired."""
         today = date.fromisoformat(day)
         for sid, poss in self.positions.items():
             for pos in list(poss):
@@ -204,15 +216,38 @@ class StrategyLabCore:
                          "position_id": pos.position_id, "detail": "no expiry close price yet"})
                     continue
                 fills = settlement_fills(pos, S)
+                exp_occs = {ls.spec.occ for ls in exp_legs}
+                legs_close = []
+                for ls in pos.legs:
+                    if ls.spec.occ in exp_occs:
+                        legs_close.append({"occ": ls.spec.occ, "bid": 0.0, "ask": 0.0})
+                        continue
+                    nb = self.hub.last_nbbo(ls.spec.occ) if self.hub is not None else None
+                    if nb is None:
+                        break                      # a live leg with no quote - never guess
+                    legs_close.append({"occ": ls.spec.occ, "bid": nb[0], "ask": nb[1]})
+                if len(legs_close) != len(pos.legs):
+                    self.ledger.strategy(sid).journal(
+                        {"event": "settlement_deferred", "ts_epoch": time.time(),
+                         "position_id": pos.position_id, "expired": sorted(exp_occs),
+                         "detail": "live leg has no NBBO on file; intrinsic applies to "
+                                   "expired legs only"})
+                    continue
                 rec = build_combo_exit_record(
                     ts=time.time(), day=day, pos=pos, rule="expiry_settlement",
-                    legs_close=[{"occ": ls.spec.occ, "bid": 0.0, "ask": 0.0} for ls in pos.legs],
+                    legs_close=legs_close,
                     S=S, state={"settle_S": S, "expiry": exp.isoformat(),
-                                "pin_risk": pin_risk_flags(pos, S, exp)},
-                    hold_trading_days=self._hold_days(pos), fills_override=fills)
+                                "pin_risk": pin_risk_flags(pos, S, exp),
+                                "settled_legs": sorted(exp_occs),
+                                "live_legs_at_last_nbbo": sorted(
+                                    ls.spec.occ for ls in pos.legs
+                                    if ls.spec.occ not in exp_occs)},
+                    hold_trading_days=self._hold_days(pos),
+                    fills_override={occ: fills[occ] for occ in exp_occs if occ in fills})
                 self.ledger.strategy(sid).write_exit(rec)
                 poss.remove(pos)
-                self.log(f"settled {pos.position_id} at S={S} intrinsic")
+                self.log(f"settled {pos.position_id} at S={S} "
+                         f"({len(exp_occs)}/{len(pos.legs)} legs expired)")
 
     # -- helpers -----------------------------------------------------------
     @staticmethod

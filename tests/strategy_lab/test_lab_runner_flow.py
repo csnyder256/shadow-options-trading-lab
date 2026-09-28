@@ -204,3 +204,134 @@ def test_halted_underlying_vetoes_entry(tmp_path, monkeypatch):
     else:
         # fail-open contract: unknown snapshot shape must NEVER block entries
         assert len(_read(s.entries_path)) == 1
+
+
+# --------------------------------------------------------------------- multi-expiry settlement
+class CalendarQuote:
+    def __init__(self, bid, ask, last=0.0):
+        self.bid, self.ask, self.last = bid, ask, last
+
+
+class CalendarHub(FakeHub):
+    """Adds a daily-history bar for the front expiry and a live book for both calendar legs."""
+
+    def __init__(self):
+        super().__init__()
+        self.book = {"SPY": (629.9, 630.1, 630.0),
+                     "OCC_FRONT": (4.60, 5.00, 0.0),      # short leg, expiring 2026-07-24
+                     "OCC_BACK": (8.00, 8.40, 0.0)}       # long leg, still 27 days of life
+        self.bars = [type("B", (), {"ts": "2026-07-24", "close": 632.0})()]
+
+    def daily_history(self, u, days=10):
+        return list(self.bars)
+
+
+class CalendarStrategy(Strategy):
+    """Enters one short-front / long-back debit calendar - the only multi-expiry shape armed."""
+    META = StrategyMeta(strategy_id="script_calendar", version=1, name="scripted calendar",
+                        universe=("SPY",), dte_range=(5, 45), max_concurrent=1,
+                        event_policy=EventPolicy.TRADE_THROUGH,
+                        grading_basis=GradingBasis.DEBIT,
+                        defining_mechanism="term_structure",
+                        settle_at_expiry=False,
+                        scan_interval_s=0.0, mark_interval_s=0.0)
+    params = _P()
+
+    def scan(self, ctx):
+        legs = [{"occ": "OCC_FRONT", "underlying": "SPY", "opt_type": "call", "strike": 630,
+                 "expiry": "2026-07-24", "side": -1, "qty": 1,
+                 "nbbo": {"bid": 4.60, "ask": 5.00}, "iv": 0.22, "delta": -0.5,
+                 "gamma": 0.02, "vega": 0.30, "theta_day": -0.12},
+                {"occ": "OCC_BACK", "underlying": "SPY", "opt_type": "call", "strike": 630,
+                 "expiry": "2026-08-21", "side": +1, "qty": 1,
+                 "nbbo": {"bid": 8.00, "ask": 8.40}, "iv": 0.20, "delta": 0.55,
+                 "gamma": 0.01, "vega": 0.45, "theta_day": -0.05}]
+        return [ProposedCombo(kind="atm_call_calendar", underlying="SPY", legs=legs,
+                              signal={"trigger": "scripted"})]
+
+    def manage(self, pos, ctx):
+        return None                       # never self-exits: the day-roll path must handle it
+
+
+def _calendar_core(tmp_path, monkeypatch, day):
+    strat = CalendarStrategy()
+    sid = strat.META.strategy_id
+    monkeypatch.setattr(rsl, "build_all", lambda: {sid: strat})
+    monkeypatch.setattr(rsl, "load_state", lambda: {sid: {"state": "armed", "cohort_pin": "",
+                                                          "note": ""}})
+    monkeypatch.setattr(rsl, "upcoming_events", lambda now: [])
+    monkeypatch.setattr(rsl, "in_blackout", lambda now, events=None: None)
+    return rsl.StrategyLabCore(runtime_dir=tmp_path, log=lambda m: None, hub=CalendarHub(),
+                               now_fn=lambda: day), sid
+
+
+def test_settlement_prices_only_the_expired_leg_at_intrinsic(tmp_path, monkeypatch):
+    """A multi-expiry combo (the ATM calendar) whose FRONT leg expired while the lab was down.
+
+    The day-roll intrinsic path must settle that front leg against the expiry close and price
+    the still-live back leg at its last observed NBBO. Settling BOTH legs at intrinsic invents
+    a close for a contract with 27 days of life left, which writes a fabricated P&L into the
+    ledger the whole evidence base is graded from.
+    """
+    core, sid = _calendar_core(tmp_path, monkeypatch, MONDAY_10AM)
+    core.tick()                                       # day 1 -> ENTER the calendar
+    s = core.ledger.strategy(sid)
+    entry = _read(s.entries_path)[0]
+    assert entry["grading"]["basis"] == "debit" and entry["grading"]["denom_usd"] == 380.0
+    # worst debit: short front sells at bid 4.60, long back buys at ask 8.40 -> 3.80
+
+    # the lab sits down through the front expiry; the next session is the following Monday
+    next_mon = datetime(2026, 7, 27, 10, 0, tzinfo=NY)
+    core.now_fn = lambda: next_mon
+    core.tick()
+    exits = _read(s.exits_path)
+    assert len(exits) == 1
+    x = exits[0]
+    assert x["rule"] == "expiry_settlement"
+    close = {l["occ"]: l for l in x["legs_close"]}
+    # front leg: settled at intrinsic (632 - 630 = 2.00), identical on all three ledgers
+    assert close["OCC_FRONT"]["fills"] == {"worst": 2.0, "base": 2.0, "optimistic": 2.0}
+    # back leg: still live -> priced off its NBBO, NOT at intrinsic
+    assert close["OCC_BACK"]["fills"] != {"worst": 2.0, "base": 2.0, "optimistic": 2.0}
+    assert close["OCC_BACK"]["fills"]["worst"] == 8.00      # long leg closes by selling at bid
+    # net_close worst = -2.00 (front) + 8.00 (back) = 6.00 ; entry debit 3.80 -> pnl +220
+    assert x["ledgers"]["worst"]["net_pnl_usd"] == 220.0
+    # the mixed settlement is self-describing: which legs settled, which were marked
+    assert x["state"]["settled_legs"] == ["OCC_FRONT"]
+    assert x["state"]["live_legs_at_last_nbbo"] == ["OCC_BACK"]
+
+
+def test_fully_expired_combo_settles_every_leg_at_intrinsic(tmp_path, monkeypatch):
+    """Unchanged path: once EVERY leg has expired the intrinsic settlement is the whole record,
+    exactly as before - the single-expiry strategies (CNDR/putwrite/0DTE IC) must not move."""
+    core, sid = _calendar_core(tmp_path, monkeypatch, MONDAY_10AM)
+    core.tick()
+    s = core.ledger.strategy(sid)
+    core.hub.bars = [type("B", (), {"ts": "2026-08-21", "close": 632.0})()]
+    core.now_fn = lambda: datetime(2026, 8, 24, 10, 0, tzinfo=NY)     # both legs now expired
+    core.tick()
+    x = _read(s.exits_path)[0]
+    close = {l["occ"]: l for l in x["legs_close"]}
+    for occ in ("OCC_FRONT", "OCC_BACK"):
+        assert close[occ]["fills"] == {"worst": 2.0, "base": 2.0, "optimistic": 2.0}
+    # net_close = -2.00 + 2.00 = 0 -> pnl = (0 - 3.80) * 100
+    assert x["ledgers"]["worst"]["net_pnl_usd"] == -380.0
+    assert x["state"]["settled_legs"] == ["OCC_BACK", "OCC_FRONT"]
+    assert x["state"]["live_legs_at_last_nbbo"] == []
+
+
+def test_partial_settlement_defers_when_a_live_leg_has_no_quote(tmp_path, monkeypatch):
+    """No fabricated price: with a live leg unpriced the settlement is deferred and journaled,
+    and the position stays on the books for the next day-roll."""
+    core, sid = _calendar_core(tmp_path, monkeypatch, MONDAY_10AM)
+    core.tick()
+    s = core.ledger.strategy(sid)
+    core.hub.book.pop("OCC_BACK")                     # quote feed never saw the back leg
+    core.now_fn = lambda: datetime(2026, 7, 27, 10, 0, tzinfo=NY)
+    core.tick()
+    assert _read(s.exits_path) == []                  # nothing invented
+    deferred = [r for r in _read(s.journal_path) if r.get("event") == "settlement_deferred"]
+    assert deferred and deferred[-1]["expired"] == ["OCC_FRONT"]
+    assert any(p.position_id for p in core.positions.get(sid, []))
+
+
