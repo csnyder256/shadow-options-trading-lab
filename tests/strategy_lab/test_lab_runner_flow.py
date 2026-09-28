@@ -212,18 +212,33 @@ class CalendarQuote:
         self.bid, self.ask, self.last = bid, ask, last
 
 
-class CalendarHub(FakeHub):
-    """Adds a daily-history bar for the front expiry and a live book for both calendar legs."""
+class _Bar:
+    def __init__(self, ts, close):
+        self.ts, self.close = ts, close
 
-    def __init__(self):
+
+class CalendarHub(FakeHub):
+    """Daily history keyed by date with a REAL lookback window, plus a live book for both legs.
+
+    `daily_history(days=N)` returns only the bars inside an N-calendar-day window ending at the
+    page's `asof` day, mirroring Tradier's calendar-day semantics - so a test can prove that an
+    old front expiry is reachable, and that one the provider can no longer serve (outside the
+    window) is honestly missed rather than silently priced off the wrong day.
+    """
+
+    def __init__(self, asof="2026-08-24"):
         super().__init__()
         self.book = {"SPY": (629.9, 630.1, 630.0),
                      "OCC_FRONT": (4.60, 5.00, 0.0),      # short leg, expiring 2026-07-24
-                     "OCC_BACK": (8.00, 8.40, 0.0)}       # long leg, still 27 days of life
-        self.bars = [type("B", (), {"ts": "2026-07-24", "close": 632.0})()]
+                     "OCC_BACK": (8.00, 8.40, 0.0)}       # long leg, expiring 2026-08-21
+        self.bars = {"2026-07-24": 632.0, "2026-08-21": 632.0}
+        self.asof = asof
 
     def daily_history(self, u, days=10):
-        return list(self.bars)
+        end = datetime.fromisoformat(self.asof).date()
+        start = end.fromordinal(end.toordinal() - int(days))
+        return [_Bar(ts=d, close=c) for d, c in sorted(self.bars.items())
+                if start <= datetime.fromisoformat(d).date() <= end]
 
 
 class CalendarStrategy(Strategy):
@@ -253,7 +268,7 @@ class CalendarStrategy(Strategy):
         return None                       # never self-exits: the day-roll path must handle it
 
 
-def _calendar_core(tmp_path, monkeypatch, day):
+def _calendar_core(tmp_path, monkeypatch, day, hub=None):
     strat = CalendarStrategy()
     sid = strat.META.strategy_id
     monkeypatch.setattr(rsl, "build_all", lambda: {sid: strat})
@@ -261,8 +276,8 @@ def _calendar_core(tmp_path, monkeypatch, day):
                                                           "note": ""}})
     monkeypatch.setattr(rsl, "upcoming_events", lambda now: [])
     monkeypatch.setattr(rsl, "in_blackout", lambda now, events=None: None)
-    return rsl.StrategyLabCore(runtime_dir=tmp_path, log=lambda m: None, hub=CalendarHub(),
-                               now_fn=lambda: day), sid
+    return rsl.StrategyLabCore(runtime_dir=tmp_path, log=lambda m: None,
+                               hub=hub or CalendarHub(), now_fn=lambda: day), sid
 
 
 def test_settlement_prices_only_the_expired_leg_at_intrinsic(tmp_path, monkeypatch):
@@ -283,6 +298,7 @@ def test_settlement_prices_only_the_expired_leg_at_intrinsic(tmp_path, monkeypat
     # the lab sits down through the front expiry; the next session is the following Monday
     next_mon = datetime(2026, 7, 27, 10, 0, tzinfo=NY)
     core.now_fn = lambda: next_mon
+    core.hub.asof = "2026-07-27"                      # provider's "today" advances with the clock
     core.tick()
     exits = _read(s.exits_path)
     assert len(exits) == 1
@@ -301,16 +317,51 @@ def test_settlement_prices_only_the_expired_leg_at_intrinsic(tmp_path, monkeypat
     assert x["state"]["live_legs_at_last_nbbo"] == ["OCC_BACK"]
 
 
-def test_fully_expired_combo_settles_every_leg_at_intrinsic(tmp_path, monkeypatch):
-    """Unchanged path: once EVERY leg has expired the intrinsic settlement is the whole record,
-    exactly as before - the single-expiry strategies (CNDR/putwrite/0DTE IC) must not move."""
-    core, sid = _calendar_core(tmp_path, monkeypatch, MONDAY_10AM)
+def test_fully_expired_combo_prices_each_leg_at_its_own_expiry_close(tmp_path, monkeypatch):
+    """Once EVERY leg has expired, each still settles at intrinsic - but at ITS OWN expiry-day
+    close. The front (2026-07-24) and back (2026-08-21) legs die on different days with
+    different closes, so pricing both off one close is the same fabrication as pricing a live
+    leg at intrinsic. This is the case the original all-expired test could NOT see: it gave both
+    expiries the SAME close, so a single-close implementation passed it by accident."""
+    hub = CalendarHub(asof="2026-08-24")
+    hub.bars = {"2026-07-24": 632.0, "2026-08-21": 640.0}      # different closes per expiry
+    core, sid = _calendar_core(tmp_path, monkeypatch, MONDAY_10AM, hub=hub)
     core.tick()
     s = core.ledger.strategy(sid)
-    core.hub.bars = [type("B", (), {"ts": "2026-08-21", "close": 632.0})()]
     core.now_fn = lambda: datetime(2026, 8, 24, 10, 0, tzinfo=NY)     # both legs now expired
     core.tick()
     x = _read(s.exits_path)[0]
+    close = {l["occ"]: l for l in x["legs_close"]}
+    # front: intrinsic 632 - 630 = 2.00 ; back: intrinsic 640 - 630 = 10.00 - each off its own day
+    assert close["OCC_FRONT"]["fills"] == {"worst": 2.0, "base": 2.0, "optimistic": 2.0}
+    assert close["OCC_BACK"]["fills"] == {"worst": 10.0, "base": 10.0, "optimistic": 10.0}
+    # net_close worst = -2.00 (short front) + 10.00 (long back) = 8.00 ; entry debit 3.80 -> +420
+    assert x["ledgers"]["worst"]["net_pnl_usd"] == 420.0
+    assert x["state"]["settled_legs"] == ["OCC_BACK", "OCC_FRONT"]
+    assert x["state"]["live_legs_at_last_nbbo"] == []
+    # the per-expiry prices are recorded explicitly, not inferred from a single S
+    assert x["state"]["settle_prices"] == {"OCC_BACK": 640.0, "OCC_FRONT": 632.0}
+    assert x["state"]["settle_S"] == 640.0                       # headline S = latest expiry
+    assert x["S"] == 640.0
+
+
+def test_same_expiry_combo_settles_every_leg_at_one_close(tmp_path, monkeypatch):
+    """Unchanged path: a single-expiry combo (the CNDR condor / weekly putwrite / 0DTE IC shape)
+    still prices every leg off one expiry-day close, and the record's state is untouched by the
+    per-expiry plumbing - `settled_legs` lists every leg, `live_legs_at_last_nbbo` is empty."""
+    hub = CalendarHub(asof="2026-07-24")
+    hub.bars = {"2026-07-24": 632.0}
+    core, sid = _calendar_core(tmp_path, monkeypatch, MONDAY_10AM, hub=hub)
+    core.tick()
+    s = core.ledger.strategy(sid)
+    # collapse both legs onto the SAME expiry: rewrite the entry's back leg to the front date
+    entries = _read(s.entries_path)
+    entries[0]["legs"][1]["expiry"] = "2026-07-24"
+    (s.entries_path).write_text("\n".join(json.dumps(r) for r in entries) + "\n", encoding="utf-8")
+    core2, sid2 = _calendar_core(tmp_path, monkeypatch, MONDAY_10AM, hub=hub)
+    core2.now_fn = lambda: datetime(2026, 7, 27, 10, 0, tzinfo=NY)
+    core2.tick()
+    x = _read(core2.ledger.strategy(sid2).exits_path)[0]
     close = {l["occ"]: l for l in x["legs_close"]}
     for occ in ("OCC_FRONT", "OCC_BACK"):
         assert close[occ]["fills"] == {"worst": 2.0, "base": 2.0, "optimistic": 2.0}
@@ -320,18 +371,66 @@ def test_fully_expired_combo_settles_every_leg_at_intrinsic(tmp_path, monkeypatc
     assert x["state"]["live_legs_at_last_nbbo"] == []
 
 
+def test_missing_earlier_expiry_close_defers(tmp_path, monkeypatch):
+    """The honest failure: an earlier expiry's close is not retrievable (outside the provider's
+    history) while a later one is. The settlement must DEFER, not price the front leg off the
+    later close. This is the exact fabrication the fix exists to stop, and the deferral is a
+    real terminal risk - a month-old front expiry may never come back."""
+    hub = CalendarHub(asof="2026-08-24")
+    hub.bars = {"2026-08-21": 640.0}                  # only the LATER expiry is available
+    core, sid = _calendar_core(tmp_path, monkeypatch, MONDAY_10AM, hub=hub)
+    core.tick()
+    s = core.ledger.strategy(sid)
+    core.now_fn = lambda: datetime(2026, 8, 24, 10, 0, tzinfo=NY)
+    core.tick()
+    assert _read(s.exits_path) == []                  # nothing fabricated
+    deferred = [r for r in _read(s.journal_path) if r.get("event") == "settlement_deferred"]
+    assert deferred, "missing expiry close must journal a deferral"
+    assert deferred[-1]["missing_expiry_close"] == ["OCC_FRONT"]
+    assert deferred[-1]["expired"] == ["OCC_BACK", "OCC_FRONT"]
+    assert len(core.positions[sid]) == 1              # position stays open for the next day-roll
+
+
 def test_partial_settlement_defers_when_a_live_leg_has_no_quote(tmp_path, monkeypatch):
     """No fabricated price: with a live leg unpriced the settlement is deferred and journaled,
-    and the position stays on the books for the next day-roll."""
+    and the position stays on the books for the next day-roll - the front leg's own expiry close
+    being available does not license guessing the live leg's mark."""
     core, sid = _calendar_core(tmp_path, monkeypatch, MONDAY_10AM)
     core.tick()
     s = core.ledger.strategy(sid)
     core.hub.book.pop("OCC_BACK")                     # quote feed never saw the back leg
     core.now_fn = lambda: datetime(2026, 7, 27, 10, 0, tzinfo=NY)
+    core.hub.asof = "2026-07-27"
     core.tick()
     assert _read(s.exits_path) == []                  # nothing invented
     deferred = [r for r in _read(s.journal_path) if r.get("event") == "settlement_deferred"]
     assert deferred and deferred[-1]["expired"] == ["OCC_FRONT"]
+    assert "NBBO" in deferred[-1]["detail"]
     assert any(p.position_id for p in core.positions.get(sid, []))
+
+
+def test_old_front_expiry_is_reachable_within_the_lookback(tmp_path, monkeypatch):
+    """Lookback honesty (the other half of the bug): the old code asked for `days=10`
+    (calendar days) and could not see a front expiry a month old, so the settlement would defer
+    forever even though the bar exists. The window is now sized from the expiry's age, so a
+    47-day-old front expiry is actually fetched and settled."""
+    hub = CalendarHub(asof="2026-08-24")
+    hub.bars = {"2026-07-08": 700.0, "2026-08-21": 640.0}     # front is 47 days old
+    core, sid = _calendar_core(tmp_path, monkeypatch, MONDAY_10AM, hub=hub)
+    core.tick()
+    s = core.ledger.strategy(sid)
+    # retarget the front leg to the 47-day-old expiry so it is far outside a days=10 window
+    entries = _read(s.entries_path)
+    entries[0]["legs"][0]["expiry"] = "2026-07-08"
+    s.entries_path.write_text("\n".join(json.dumps(r) for r in entries) + "\n", encoding="utf-8")
+    core2, sid2 = _calendar_core(tmp_path, monkeypatch, MONDAY_10AM, hub=hub)
+    core2.now_fn = lambda: datetime(2026, 8, 24, 10, 0, tzinfo=NY)
+    core2.tick()
+    exits = _read(core2.ledger.strategy(sid2).exits_path)
+    assert exits, "old front expiry must be reachable, not deferred"
+    close = {l["occ"]: l for l in exits[0]["legs_close"]}
+    # front 700 - 630 = 70 intrinsic off its OWN 2026-07-08 close
+    assert close["OCC_FRONT"]["fills"]["worst"] == 70.0
+    assert exits[0]["state"]["settle_prices"]["OCC_FRONT"] == 700.0
 
 
