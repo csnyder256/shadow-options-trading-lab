@@ -57,6 +57,7 @@ HEARTBEAT_SCHEMA = 2
 # Extra calendar days requested on top of an expiry's age when fetching its daily-history bar,
 # so a weekend/holiday run of non-trading days around the expiry cannot push it out of window.
 SETTLE_HISTORY_PAD_DAYS = 10
+LATE_TICK_GRACE_MIN = 20             # ticks continue this far past the latest options close
 
 
 def _paths(runtime_dir: Path) -> dict:
@@ -484,7 +485,16 @@ class StrategyLabCore:
             self.write_heartbeat()
             return
         close_min = session_close_minute(today)
-        if minute < 570 or minute > close_min + 20:
+        # The tick gate is per-UNDERLYING, not per-calendar-day. Index ETFs (SPY/QQQ/IWM/DIA)
+        # keep quoting to close+15 (options_close_minute) and every one of the ETF-only
+        # strategies owns that window; a name-blind gate on session_close_minute derived its
+        # 20-minute grace from the 960 equity close while ctx.session_close_min - built below
+        # from the strategy's OWN universe - said 975. The two bounds now come from the same
+        # source, so the gate can never under-reach the window it is supposed to cover.
+        latest_options_close = max(
+            [close_min] + [options_close_minute(today, u) for sid_ in self.armed
+                           for u in self.strategies[sid_].META.universe])
+        if minute < 570 or minute > latest_options_close + LATE_TICK_GRACE_MIN:
             self.write_heartbeat()
             return
 
