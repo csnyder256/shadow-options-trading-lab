@@ -434,3 +434,40 @@ def test_old_front_expiry_is_reachable_within_the_lookback(tmp_path, monkeypatch
     assert exits[0]["state"]["settle_prices"]["OCC_FRONT"] == 700.0
 
 
+
+
+@pytest.mark.parametrize("invalid", [0, -1, float("nan"), float("inf"), "bad"])
+def test_invalid_expiry_close_defers_instead_of_fabricating_pnl(tmp_path, monkeypatch, invalid):
+    core, sid = _calendar_core(tmp_path, monkeypatch, MONDAY_10AM)
+    core.tick()
+    core.hub.asof = "2026-07-27"
+    core.hub.bars["2026-07-24"] = invalid
+    core.now_fn = lambda: datetime(2026, 7, 27, 10, 0, tzinfo=NY)
+    core.tick()
+    assert _read(core.ledger.strategy(sid).exits_path) == []
+    assert core.positions[sid]
+
+
+@pytest.mark.parametrize("nbbo", [(9, 8, 0), (8, float("nan"), 0), (8, 9, -1), (8, 9)])
+def test_invalid_live_quote_defers_settlement(tmp_path, monkeypatch, nbbo):
+    core, sid = _calendar_core(tmp_path, monkeypatch, MONDAY_10AM)
+    core.tick()
+    core.hub.asof = "2026-07-27"
+    original = core.hub.last_nbbo
+    core.hub.last_nbbo = lambda occ: nbbo if occ == "OCC_BACK" else original(occ)
+    core.now_fn = lambda: datetime(2026, 7, 27, 10, 0, tzinfo=NY)
+    core._settle_expired("2026-07-27")
+    assert _read(core.ledger.strategy(sid).exits_path) == []
+    assert core.positions[sid]
+
+
+def test_stale_exit_quote_is_allowed_but_its_age_is_recorded(tmp_path, monkeypatch):
+    core, sid = _calendar_core(tmp_path, monkeypatch, MONDAY_10AM)
+    core.tick()
+    core.hub.asof = "2026-07-27"
+    original = core.hub.last_nbbo
+    core.hub.last_nbbo = lambda occ: (8, 8.4, 3600) if occ == "OCC_BACK" else original(occ)
+    core.now_fn = lambda: datetime(2026, 7, 27, 10, 0, tzinfo=NY)
+    core.tick()
+    exit = _read(core.ledger.strategy(sid).exits_path)[0]
+    assert exit["state"]["live_leg_quote_ages_s"] == {"OCC_BACK": 3600}

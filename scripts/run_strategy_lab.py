@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 import time
@@ -209,7 +210,11 @@ class StrategyLabCore:
         iso = expiry.isoformat()
         for bar in self.hub.daily_history(underlying, days=window):
             if str(bar.ts)[:10] == iso:
-                return float(bar.close)
+                try:
+                    close = float(bar.close)
+                except (TypeError, ValueError):
+                    return None
+                return close if math.isfinite(close) and close > 0 else None
         return None
 
     def _settle_expired(self, day: str) -> None:
@@ -263,20 +268,24 @@ class StrategyLabCore:
                         intrinsic(ls.spec.opt_type, ls.spec.strike, expiry_px[ls.spec.occ]), 4)
                 legs_close = []
                 live_missing = False
+                live_quote_ages: dict[str, float] = {}
                 for ls in pos.legs:
                     if ls.spec.occ in exp_occs:
                         legs_close.append({"occ": ls.spec.occ, "bid": 0.0, "ask": 0.0})
                         continue
                     nb = self.hub.last_nbbo(ls.spec.occ) if self.hub is not None else None
-                    if nb is None:
+                    if (nb is None or len(nb) < 3 or not all(
+                            isinstance(v, (int, float)) and math.isfinite(v) for v in nb[:3])
+                            or not 0 <= nb[0] <= nb[1] or nb[1] <= 0 or nb[2] < 0):
                         live_missing = True
                         break                      # a live leg with no quote - never guess
+                    live_quote_ages[ls.spec.occ] = nb[2]
                     legs_close.append({"occ": ls.spec.occ, "bid": nb[0], "ask": nb[1]})
                 if live_missing:
                     self.ledger.strategy(sid).journal(
                         {"event": "settlement_deferred", "ts_epoch": time.time(),
                          "position_id": pos.position_id, "expired": sorted(exp_occs),
-                         "detail": "live leg has no NBBO on file; intrinsic applies to "
+                         "detail": "live leg has no valid NBBO with quote age on file; intrinsic applies to "
                                    "expired legs only"})
                     continue
                 # the record's headline S/pin_risk use the LATEST expiry (the last leg to die);
@@ -289,6 +298,7 @@ class StrategyLabCore:
                     S=S, state={"settle_S": S, "expiry": last_exp.isoformat(),
                                 "pin_risk": pin_risk_flags(pos, S, last_exp),
                                 "settled_legs": sorted(exp_occs),
+                                "live_leg_quote_ages_s": live_quote_ages,
                                 "settle_prices": {occ: round(px, 4)
                                                   for occ, px in sorted(expiry_px.items())},
                                 "live_legs_at_last_nbbo": sorted(
