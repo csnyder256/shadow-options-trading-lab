@@ -32,6 +32,29 @@ def test_same_sign_concentration_flag():
     assert any("|net|/gross" in f for f in out["flags"])
 
 
+def test_single_underlying_book_is_flagged_as_concentrated():
+    """A book that trades ONE underlying carries 100% of its gross delta$ in that name -
+    the most concentrated shape there is. The share flag must fire; it used to be suppressed
+    by a `len(per_underlying) > 1` guard, which silently hid the warning in exactly the
+    "N strategies long SPY is ONE bet" case this block exists to report."""
+    book = {f"s{i}": [_pos(f"s{i}", 0.5)] for i in range(3)}     # 3 strategies, SPY only
+    out = aggregate(book, spots={"SPY": 630.0})
+    assert out["per_underlying"]["SPY"]["gross_delta_dollars"] == out["gross_delta_dollars"]
+    assert any("SPY carries 100% of gross delta$" in f for f in out["flags"]), out["flags"]
+
+
+def test_top_underlying_share_flag_ignores_unrelated_small_position():
+    """Adding a token position in a SECOND underlying must not be what unlocks the SPY share
+    flag. The flag tracks the share of the dominant name, so it fires in both books."""
+    spy_only = {f"s{i}": [_pos(f"s{i}", 0.5)] for i in range(3)}
+    with_token = dict(spy_only)
+    with_token["iwm"] = [_pos("iwm", 0.001, underlying="IWM")]
+    a = aggregate(spy_only, spots={"SPY": 630.0})
+    b = aggregate(with_token, spots={"SPY": 630.0, "IWM": 630.0})
+    assert any("SPY carries" in f for f in a["flags"]), a["flags"]
+    assert any("SPY carries" in f for f in b["flags"]), b["flags"]
+
+
 def test_balanced_book_no_flags():
     # 3 underlyings so no single one reaches the 50% gross share bar; long/short pairs net to 0
     book = {"a": [_pos("a", 0.5)], "b": [_pos("b", -0.5, seq=1)],
