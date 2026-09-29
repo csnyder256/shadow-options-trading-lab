@@ -1,0 +1,8 @@
+**
+!Dockerfile
+!requirements.txt
+!atlas/
+!atlas/**
+!scripts/
+!scripts/**
+**/__pycache__/

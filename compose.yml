@@ -1,0 +1,12 @@
+services:
+  atlas:
+    build:
+      context: .
+      target: runtime
+    volumes:
+      - ./config:/opt/atlas/config:ro
+      - atlas-runtime:/opt/atlas/runtime
+    init: true
+    security_opt: ["no-new-privileges:true"]
+volumes:
+  atlas-runtime:

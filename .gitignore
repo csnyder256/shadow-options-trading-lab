@@ -74,3 +74,6 @@ buckets_*.txt
 Thumbs.db
 .idea/
 .vscode/
+
+# Release build output
+dist-release/
