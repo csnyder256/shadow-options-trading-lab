@@ -276,3 +276,10 @@ Practical consequence: you can install, import, and run the full test suite on a
 MIT. See [LICENSE](LICENSE).
 
 Built by Cade (https://github.com/csnyder256)
+
+
+## Release downloads and deployment
+
+[Latest release](https://github.com/csnyder256/shadow-options-trading-lab/releases/latest) · [Install, deploy and upgrade](DEPLOYMENT.md)
+
+Release assets include checksums and version-specific notes.

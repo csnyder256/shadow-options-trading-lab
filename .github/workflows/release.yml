@@ -1,0 +1,45 @@
+name: Release
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - run: python scripts/verify_release.py
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q
+      - run: docker build -t portfolio-release .
+      - run: python scripts/smoke_release.py portfolio-release
+      - run: python scripts/package_release.py
+      - run: python scripts/verify_bundle.py
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-downloads
+          path: dist-release/*
+          if-no-files-found: error
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-downloads
+          path: dist-release/
+      - uses: softprops/action-gh-release@v3
+        with:
+          body_path: docs/releases/${{ github.ref_name }}.md
+          files: dist-release/*
+          fail_on_unmatched_files: true
