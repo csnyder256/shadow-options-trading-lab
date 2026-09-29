@@ -2,7 +2,7 @@
 
 ## Linux or Docker Desktop research environment
 
-Extract the `v0.1.1` deployment ZIP or tarball from [Releases](https://github.com/csnyder256/shadow-options-trading-lab/releases). Check SHA-256 against `checksums.txt`. Build and inspect the CLI:
+Extract the `v0.2.0` deployment ZIP or tarball from [Releases](https://github.com/csnyder256/shadow-options-trading-lab/releases). Check SHA-256 against `checksums.txt`. Build and inspect the CLI:
 
 ```sh
 docker compose -p atlas build
@@ -33,3 +33,13 @@ The same bundle supports the existing Python 3.14 virtual environment workflow i
 ## Upgrade and backup
 
 Stop research processes before exporting the named runtime volume (Docker Desktop or a temporary archive container). Keep a separate copy of private `config`, credentials, data and ledgers. Extract the new release to a separate directory and use the same Compose project name to reuse the volume. Restore your reviewed configuration there before running. Retain the previous release and its matching ledger backup for rollback. Never replace a live ledger with the release's examples.
+
+## Offline historical replay
+
+Open `index.html` from the release downloads, or `dist-demo/index.html` in the deployment bundle. It is a self-contained fictional quote-history demonstration with no server, telemetry or market-data access. For a report from your own recorded ledgers:
+
+```sh
+python -m atlas.options.replay_report --entries /path/to/entries.jsonl --quotes /path/to/quotes.jsonl --fee-per-contract 0.65 --output /path/to/new-report
+```
+
+Use a new output directory. Repeat `--quotes` for later day ledgers. See [Replay guide](docs/REPLAY.md) for validation, context fidelity and sharing precautions. The image supports the same module command with your ledger mount read-only and a separate writable output mount.

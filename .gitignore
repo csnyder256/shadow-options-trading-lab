@@ -77,3 +77,6 @@ Thumbs.db
 
 # Release build output
 dist-release/
+
+# Generated fictional replay and personal reports
+dist-demo/

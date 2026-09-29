@@ -2,7 +2,7 @@ FROM python:3.14-slim AS core
 LABEL org.opencontainers.image.source="https://github.com/csnyder256/shadow-options-trading-lab"
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/opt/atlas PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 WORKDIR /opt/atlas
-COPY requirements.txt ./
+COPY requirements.txt VERSION ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY atlas atlas
 COPY scripts scripts

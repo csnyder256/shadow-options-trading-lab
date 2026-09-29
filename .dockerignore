@@ -1,6 +1,7 @@
 **
 !Dockerfile
 !requirements.txt
+!VERSION
 !atlas/
 !atlas/**
 !scripts/
