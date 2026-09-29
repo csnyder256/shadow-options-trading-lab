@@ -14,4 +14,7 @@ for filename, pattern in config.get("version_patterns", {}).items():
     match = re.search(pattern, (root / filename).read_text())
     assert match and match.group(1) == version, filename
 assert (root / "docs/releases" / ("v" + version + ".md")).is_file(), "Release notes missing"
+notes = root / "docs/releases" / ("v" + version + ".md")
+deployment_link = "https://github.com/csnyder256/" + config["name"] + "/blob/v" + version + "/DEPLOYMENT.md"
+assert "(" + deployment_link + ")" in notes.read_text(), "Release notes need a version-specific deployment link"
 print("Release metadata agrees on", version)
