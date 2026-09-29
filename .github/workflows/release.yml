@@ -19,6 +19,7 @@ jobs:
       - run: python -m pytest -q
       - run: docker build -t portfolio-release .
       - run: python scripts/smoke_release.py portfolio-release
+      - run: python -m atlas.options.replay_report --demo --fee-per-contract 0.65 --output dist-demo
       - run: python scripts/package_release.py
       - run: python scripts/verify_bundle.py
       - uses: actions/upload-artifact@v7

@@ -1,5 +1,11 @@
 {
   "name": "shadow-options-trading-lab",
   "package_json": [],
-  "version_patterns": {}
+  "version_patterns": {},
+  "built": [
+    "dist-demo"
+  ],
+  "extra_assets": [
+    "dist-demo/index.html"
+  ]
 }

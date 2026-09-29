@@ -30,7 +30,7 @@ the three-ledger worst column (shadow.entry_fills/exit_fills), same as the grid 
 
 from __future__ import annotations
 
-from dataclasses import fields as dc_fields
+from dataclasses import asdict, fields as dc_fields
 from datetime import date, datetime, timedelta
 
 from atlas.options.shadow import exit_fills, position_from_entry
@@ -53,7 +53,7 @@ def _now_et(entry_day: date, entry_ts: float, entry_minute: int, row_ts: float,
 
 
 def replay_decide_exit(entry_rec: dict, quote_rows: list, *, engine, params,
-                       day_close_min: int = 960) -> dict | None:
+                       day_close_min: int = 960, trace: list | None = None) -> dict | None:
     """Walk one position's stored quote rows through `engine.decide_exit(...)` chronologically
     and sell at the FIRST SELL decision. `engine` is an exit-engine MODULE (atlas.options.
     exit_engine or .exit_engine_legacy); `params` its matching ExitParams. `day_close_min` is
@@ -66,6 +66,8 @@ def replay_decide_exit(entry_rec: dict, quote_rows: list, *, engine, params,
                                              the path ends without one, same as a still-open
                                              live position)
       marks_replayed/skipped_no_ext/engine_errors/peak_mid/peak_bid - path accounting.
+    If provided, trace receives the actual inputs and decisions through the first SELL.
+    Tracing does not change decision order, carried state, or the existing result shape.
     """
     pos = position_from_entry(entry_rec)
     if pos is None:
@@ -152,9 +154,17 @@ def replay_decide_exit(entry_rec: dict, quote_rows: list, *, engine, params,
         marks_replayed += 1
         try:
             decision = engine.decide_exit(engine.PositionView(**kw), now_et, params)
-        except Exception:  # noqa: BLE001 - the runner journals + HOLDs; the replay counts
+        except Exception as exc:  # noqa: BLE001 - runner journals + HOLDs
             engine_errors += 1
+            if trace is not None:
+                trace.append({"ts_epoch": r.get("ts_epoch"), "time_et": now_et.isoformat(),
+                              "minute": minute, "inputs": kw,
+                              "decision": {"action": "HOLD", "rule": "engine_error",
+                                           "error_type": type(exc).__name__}})
             continue
+        if trace is not None:
+            trace.append({"ts_epoch": r.get("ts_epoch"), "time_et": now_et.isoformat(),
+                          "minute": minute, "inputs": kw, "decision": asdict(decision)})
         breaches = int(decision.theta_share_breaches)
         h_since = getattr(decision, "h_breach_since_min", h_since)
         i_since = getattr(decision, "i_breach_since_min", i_since)

@@ -1,0 +1,47 @@
+name: Replay demo
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: replay-pages-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - name: Build fictional offline demo
+        run: |
+          python -m atlas.options.replay_report --demo --fee-per-contract 0.65 --output _site
+          python - <<'PYCODE'
+          import json, os
+          from pathlib import Path
+          report = json.loads(Path('_site/report.json').read_text())
+          Path('_site/deployment.json').write_text(json.dumps({'source_sha': os.environ['GITHUB_SHA'], 'version': report['product_version'], 'report_sha256': report['report_sha256'], 'fictional': True}, indent=2) + '\n')
+          PYCODE
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/configure-pages@v6
+      - id: deployment
+        uses: actions/deploy-pages@v5

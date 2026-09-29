@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="__CSP__"><title>Shadow | Replay Lab</title><style>__CSS__</style></head>
+<body><a class="skip" href="#replay">Skip to replay</a>
+<header><span class="brand">SHADOW / REPLAY LAB</span><span class="pill">Offline research</span></header>
+<main><section class="hero"><p class="eyebrow">Every exit has a reason.</p><h1>Rewind the market.<br>Inspect the decision.</h1>
+<p id="dataset"></p><p>Replay a recorded quote path through the current exit engine and a frozen baseline. Inspect the inputs at each mark, compare the first exit and keep the evidence.</p>
+<div class="toolbar"><button id="tour">Take the tour</button><button id="export-json">Export full report</button><button id="export-csv">Export position CSV</button><button id="print">Print / save PDF</button></div></section>
+<section id="coverage" class="panel" aria-labelledby="coverage-title"><h2 id="coverage-title">What this history can tell you</h2><div id="summary" class="cards"></div><p id="paired"></p></section>
+<section id="replay" class="panel" tabindex="-1"><div class="section-head"><div><p class="eyebrow">01 / Chronological replay</p><h2>Follow a position.</h2></div>
+<div class="toolbar"><label>Position <select id="position"></select></label><label>Exit engine <select id="variant"></select></label></div></div>
+<p id="position-status"></p><div id="chart" aria-live="polite"></div>
+<div class="playback"><button id="play">Play</button><button id="previous">Previous mark</button><button id="next">Next mark</button><label>Speed <select id="speed"><option value="1200">1x</option><option value="600">2x</option><option value="300">4x</option></select></label><output id="clock" aria-live="polite"></output></div>
+<label class="scrub">Quote mark <input id="scrub" type="range" min="0" max="0" value="0"></label>
+<div class="decision-grid"><article class="decision"><p class="eyebrow">02 / First match wins</p><h3 id="action"></h3><p id="rule"></p><p id="fill"></p></article>
+<article><h3>Why this decision?</h3><p id="explanation"></p><details><summary>Actual PositionView and decision metrics</summary><pre id="trace"></pre></details></article></div></section>
+<section class="panel" id="results"><p class="eyebrow">03 / Paired evidence</p><h2>Compare exits on the same path.</h2><p>Dollar comparisons include only positions closed in both engines. Open and unreplayable paths remain visible.</p>
+<div class="table-wrap"><table><thead><tr><th>Position</th><th>Engine</th><th>State</th><th>First exit (ET)</th><th>Rule</th><th>Net after fees</th><th>Marks / skipped / errors</th></tr></thead><tbody id="positions"></tbody></table></div>
+<h3>Paired closed-position differences</h3><p>Variant minus baseline. Positive time means the variant exited later.</p><div class="table-wrap"><table><thead><tr><th>Position</th><th>Baseline</th><th>Variant</th><th>Net difference</th><th>Exit delay (minutes)</th></tr></thead><tbody id="comparisons"></tbody></table></div>
+<h3>Closed-only realized sequence</h3><div id="equity"></div><p>The sequence uses actual exit timestamps. It is not a portfolio return curve; no capital allocation is modeled.</p></section>
+<section class="panel" id="provenance"><p class="eyebrow">04 / Reproduce it</p><h2>Keep the chain of evidence.</h2><dl id="assumptions"></dl><details><summary>Input, engine and configuration hashes</summary><pre id="hashes"></pre></details>
+<p>Reports include contract identifiers and decision inputs. Inspect the report before sharing it. Notes, credentials and unrelated ledger fields are omitted from display and export.</p></section>
+<footer>Shadow Options Trading Lab / exit-policy research. No broker connection. No orders. Fictional examples demonstrate mechanics, not investment performance.<p>Large paths use at most 1,000 plotted marks per series. The full decision trace and exported report retain every consumed mark.</p></footer></main>
+<dialog id="tour-dialog" aria-labelledby="tour-title"><p class="eyebrow" id="tour-progress"></p><h2 id="tour-title"></h2><p id="tour-body"></p><div class="toolbar"><button id="tour-back">Back</button><button id="tour-next">Next</button><button id="tour-close">Close tour</button></div></dialog>
+<script id="report-data" type="application/json">__DATA__</script><script>__JS__</script></body></html>

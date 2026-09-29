@@ -283,3 +283,13 @@ Built by Cade (https://github.com/csnyder256)
 [Latest release](https://github.com/csnyder256/shadow-options-trading-lab/releases/latest) · [Install, deploy and upgrade](DEPLOYMENT.md)
 
 Release assets include checksums and version-specific notes.
+
+## Rewind a decision
+
+The [offline replay viewer](https://csnyder256.github.io/shadow-options-trading-lab/) compares the current exit engine with the frozen V1 engine on explicitly fictional historical-date quote paths. Scrub each decision, compare exit timing, inspect the exact inputs and rule state, and export JSON, CSV or a printable report. Open and unreplayable positions remain visible, with unavailable realized P&L.
+
+```sh
+python -m atlas.options.replay_report --demo --fee-per-contract 0.65 --output replay-demo
+```
+
+Open `replay-demo/index.html`. [Run your own recorded quote paths](docs/REPLAY.md) without a broker, API key or network connection. This replays exit policies for selected entries; it does not estimate a full trading strategy's performance.
