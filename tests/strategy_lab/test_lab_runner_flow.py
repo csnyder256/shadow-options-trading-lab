@@ -264,12 +264,12 @@ class CalendarStrategy(Strategy):
         return [ProposedCombo(kind="atm_call_calendar", underlying="SPY", legs=legs,
                               signal={"trigger": "scripted"})]
 
-    def manage(self, pos, ctx):
+    def manage(self, pos, ctx) -> "ExitAction | None":
         return None                       # never self-exits: the day-roll path must handle it
 
 
-def _calendar_core(tmp_path, monkeypatch, day, hub=None):
-    strat = CalendarStrategy()
+def _calendar_core(tmp_path, monkeypatch, day, hub=None, strat_cls=None):
+    strat = (strat_cls or CalendarStrategy)()
     sid = strat.META.strategy_id
     monkeypatch.setattr(rsl, "build_all", lambda: {sid: strat})
     monkeypatch.setattr(rsl, "load_state", lambda: {sid: {"state": "armed", "cohort_pin": "",
@@ -471,3 +471,106 @@ def test_stale_exit_quote_is_allowed_but_its_age_is_recorded(tmp_path, monkeypat
     core.tick()
     exit = _read(core.ledger.strategy(sid).exits_path)[0]
     assert exit["state"]["live_leg_quote_ages_s"] == {"OCC_BACK": 3600}
+
+
+# ------------------------------------------------------- already-expired legs (no live book)
+class _CloseOnManage(CalendarStrategy):
+    """The ATM-calendar shape whose manage() demands a close - the second exit funnel that
+    would price an already-expired leg off `book` through _close_position."""
+    META = StrategyMeta(strategy_id="script_calendar_close", version=1,
+                        name="scripted calendar that self-closes",
+                        universe=("SPY",), dte_range=(5, 45), max_concurrent=1,
+                        event_policy=EventPolicy.TRADE_THROUGH,
+                        grading_basis=GradingBasis.DEBIT,
+                        defining_mechanism="term_structure",
+                        settle_at_expiry=False,
+                        scan_interval_s=0.0, mark_interval_s=0.0)
+    params = _P()
+
+    def manage(self, pos, ctx):
+        return ExitAction(action="close", rule="scripted_expiry_close", state={})
+
+
+class _TodayExpiryStrategy(Strategy):
+    """One long call expiring TODAY - the shape the expiry-day backstop exists for."""
+    META = StrategyMeta(strategy_id="script_sameday", version=1, name="same-day expiry call",
+                        universe=("SPY",), dte_range=(0, 7), max_concurrent=1,
+                        event_policy=EventPolicy.TRADE_THROUGH,
+                        grading_basis=GradingBasis.DEBIT,
+                        defining_mechanism="directional_momentum",
+                        settle_at_expiry=False,
+                        scan_interval_s=0.0, mark_interval_s=0.0)
+    params = _P()
+
+    def scan(self, ctx):
+        legs = [{"occ": "OCC_LONG", "underlying": "SPY", "opt_type": "call", "strike": 630,
+                 "expiry": "2026-07-27", "side": +1, "qty": 1,
+                 "nbbo": {"bid": 10.0, "ask": 10.4}, "iv": 0.2, "delta": 0.5,
+                 "gamma": 0.01, "vega": 0.4, "theta_day": -0.05}]
+        return [ProposedCombo(kind="long_call", underlying="SPY", legs=legs,
+                              signal={"trigger": "same_day"})]
+
+    def manage(self, pos, ctx):
+        return None
+
+
+def test_expiry_backstop_never_prices_an_already_expired_leg(tmp_path, monkeypatch):
+    """A combo whose front leg died while the lab was down, with that expiry's close
+    unretrievable, must NOT be force-closed by the global expiry rail near the close: the rail
+    prices every leg off the live book, and an expired leg has no live book - its last (stale,
+    pre-expiry) quote would land in the graded ledger as real P&L.
+
+    Before the fix this tick wrote `rule=expiry_backstop` with the dead front leg at its stale
+    bid 5.00, while the SAME tick's settlement path journaled "refusing to fabricate a
+    settlement price" - the two rails contradicted each other and the fabricated price won.
+    """
+    hub = CalendarHub(asof="2026-08-24")
+    hub.bars = {"2026-08-21": 640.0}           # only the LATER expiry is retrievable
+    core, sid = _calendar_core(tmp_path, monkeypatch, MONDAY_10AM, hub=hub)
+    core.tick()                                 # day 1 -> ENTER the calendar
+    s = core.ledger.strategy(sid)
+    assert _read(s.entries_path)
+
+    core.hub.asof = "2026-07-27"
+    core.now_fn = lambda: datetime(2026, 7, 27, 16, 5, tzinfo=NY)   # near the close
+    core.tick()
+    assert _read(s.exits_path) == []            # nothing fabricated
+    journal = _read(s.journal_path)
+    assert [r for r in journal if r.get("event") == "settlement_deferred"]
+    pending = [r for r in journal if r.get("event") == "combo_awaiting_settlement"]
+    assert pending and pending[0]["expired"] == ["OCC_FRONT"]
+    assert len(core.positions[sid]) == 1        # left for the next day-roll's settlement
+
+
+def test_strategy_close_is_skipped_for_a_combo_with_an_expired_leg(tmp_path, monkeypatch):
+    """The other exit funnel: a strategy that WANTS to close must not be allowed to price the
+    expired leg either - _close_position would use the same stale book. The combo waits for
+    the settlement path instead."""
+    hub = CalendarHub(asof="2026-08-24")
+    hub.bars = {"2026-08-21": 640.0}
+    core, sid = _calendar_core(tmp_path, monkeypatch, MONDAY_10AM, hub=hub,
+                               strat_cls=_CloseOnManage)
+    core.tick()                                 # day 1 -> ENTER
+    s = core.ledger.strategy(sid)
+    core.hub.asof = "2026-07-27"
+    core.now_fn = lambda: datetime(2026, 7, 27, 10, 0, tzinfo=NY)
+    core.tick()
+    assert _read(s.exits_path) == []
+    assert any(r.get("event") == "combo_awaiting_settlement" for r in _read(s.journal_path))
+    assert len(core.positions[sid]) == 1
+
+
+def test_expiry_backstop_still_fires_on_the_expiry_day_itself(tmp_path, monkeypatch):
+    """Positive control: the rail keeps its full coverage on expiry day - a combo whose nearest
+    leg expires TODAY is closed at close-lead_min off the live (still-trading) book."""
+    core, sid = _calendar_core(tmp_path, monkeypatch, MONDAY_10AM, hub=FakeHub(),
+                               strat_cls=_TodayExpiryStrategy)
+    core.tick()                                 # day 1 -> ENTER the same-day-expiry call
+    s = core.ledger.strategy(sid)
+    pid = _read(s.entries_path)[0]["position_id"]
+    core.now_fn = lambda: datetime(2026, 7, 27, 16, 5, tzinfo=NY)
+    core.tick()
+    exits = _read(s.exits_path)
+    assert len(exits) == 1 and exits[0]["rule"] == "expiry_backstop"
+    assert exits[0]["position_id"] == pid                          # the rail closed THIS combo
+    assert exits[0]["legs_close"][0]["fills"]["worst"] == 10.0      # live bid, not intrinsic
