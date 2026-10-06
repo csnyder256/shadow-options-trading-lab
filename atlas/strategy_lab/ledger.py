@@ -60,18 +60,52 @@ class StrategyLedger:
 
     def open_positions(self) -> list:
         """Rebuild open combos: entries minus exited position_ids. Fail-CLOSED on unreadable
-        ledgers (raises LedgerUnreadable). Malformed entry rows are skipped (never crash)."""
+        ledgers (raises LedgerUnreadable). Malformed entry rows are skipped (never crash).
+
+        Each surviving position is then re-primed from its OWN mark history. A rebuild starts
+        from the ENTRY row, and `combo_from_entry` starts the observation state empty - so
+        without this the running underlying MFE/MAE and the mark-carried strategy state reset
+        at every session boundary, and a multi-day exit record reported only the excursion of
+        the session it closed in. This mirrors ShadowLedger._open_positions, which re-primes
+        peak/mfe/breach clocks from the same marks. Marks are best-effort (tolerant read), so
+        an unreadable marks file degrades the re-prime, never the fail-closed entries/exits.
+        """
         exits = read_jsonl(self.exits_path, strict=True)
         entries = read_jsonl(self.entries_path, strict=True)
         exited = {r.get("position_id") for r in exits if r.get("event") == "lab_exit"}
+        marks_by_pid: dict = {}
+        for mk in read_jsonl(self.marks_path):
+            marks_by_pid.setdefault(mk.get("position_id"), []).append(mk)
         out: list[ComboPosition] = []
         for rec in entries:
             if rec.get("event") != "lab_entry" or rec.get("position_id") in exited:
                 continue
             pos = combo_from_entry(rec)
             if pos is not None:
+                self._reprime_from_marks(pos, marks_by_pid.get(pos.position_id, []))
                 out.append(pos)
         return out
+
+    @staticmethod
+    def _reprime_from_marks(pos: ComboPosition, marks: list) -> None:
+        """Seed a rebuilt position's observation state from its mark history (append-only,
+        single writer, oldest-first). Restores the running underlying excursion and the last
+        mark clock, and re-applies the strategy state carried through the marks - the fields
+        a day-roll rebuild would otherwise zero every session. Mirrors the main shadow's
+        rebuild, and is the default `Strategy.rebuild` already assumes."""
+        for mk in marks:
+            try:
+                s = float(mk.get("S") or 0.0)
+                ts = float(mk.get("ts_epoch") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if s > 0:
+                pos.observe_underlying(s)
+            pos.last_mark_ts = max(pos.last_mark_ts, ts)
+        if marks:
+            state = marks[-1].get("state")
+            if isinstance(state, dict):
+                pos.carried = dict(state)
 
     def marks_for(self, position_id: str) -> list:
         return [r for r in read_jsonl(self.marks_path) if r.get("position_id") == position_id]
