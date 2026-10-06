@@ -47,7 +47,8 @@ from atlas.strategy_lab.model import (LegSpec, build_combo_entry_record,  # noqa
                                       leg_open_fills)
 from atlas.strategy_lab.registry import armed_roster, build_all, load_state, validate  # noqa: E402
 from atlas.strategy_lab.settlement import expired_legs, pin_risk_flags  # noqa: E402
-from atlas.strategy_lab.strategy import EventPolicy, StrategyContext, expiry_backstop_due  # noqa: E402
+from atlas.strategy_lab.strategy import (EventPolicy, StrategyContext,  # noqa: E402
+                                         expiry_backstop_due, has_expired_leg)
 
 NY = ZoneInfo("America/New_York")
 
@@ -162,6 +163,9 @@ class StrategyLabCore:
         self._scan_ts: dict[str, float] = {}
         self._mark_ts: dict[str, float] = {}
         self._seq_today: dict[str, int] = {}
+        # position_ids already journaled as settlement-pending today (one line per position
+        # per day, not one per mark cycle) - see _manage_positions.
+        self._settlement_pending_noted: set[str] = set()
         self.log(f"lab core up: {len(self.strategies)} registered, "
                  f"{len(self.armed)} armed {self.armed}, cap {LAB_CAP_PER_MIN}/min")
 
@@ -179,6 +183,7 @@ class StrategyLabCore:
         self._day = day
         self.quarantined = {}
         self._seq_today = {}
+        self._settlement_pending_noted = set()
         n_open = sum(len(v) for v in self.positions.values())
         self.ledger.journal({"event": "day_roll", "ts_epoch": time.time(), "day": day,
                              "open_combos": n_open, "armed": self.armed})
@@ -446,6 +451,24 @@ class StrategyLabCore:
             self.ledger.strategy(sid).write_mark(build_combo_mark_record(
                 ts=time.time(), position_id=pos.position_id, strategy_id=sid,
                 legs_nbbo=book, S=S, state=dict(pos.carried), action="hold", rule=""))
+            # An already-expired leg has no live NBBO, so BOTH remaining exit funnels would
+            # write the dead leg's stale quote into the graded ledger: the backstop would price
+            # it off `book`, and a strategy close would do the same through _close_position.
+            # Such a combo's only honest exit is the day-roll settlement path (intrinsic at
+            # each leg's own expiry-day close), which runs before this and defers when a
+            # required price is missing. Skip both funnels and leave the position for the next
+            # day-roll; journaled once per position per day so a terminal deferral is visible.
+            if has_expired_leg(pos, today=today):
+                if pos.position_id not in self._settlement_pending_noted:
+                    self._settlement_pending_noted.add(pos.position_id)
+                    self.ledger.strategy(sid).journal(
+                        {"event": "combo_awaiting_settlement", "ts_epoch": time.time(),
+                         "position_id": pos.position_id,
+                         "expired": sorted(ls.spec.occ for ls in pos.legs
+                                           if ls.spec.expiry < today),
+                         "detail": "an expired leg has no live NBBO; the combo is priced only "
+                                   "by the settlement path - backstop and manage are skipped"})
+                continue
             if (not strat.META.settle_at_expiry
                     and expiry_backstop_due(pos, today=today, minute=ctx.minute,
                                             session_close_min=ctx.session_close_min)):

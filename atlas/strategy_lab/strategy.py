@@ -134,8 +134,27 @@ class Strategy(ABC):
         return f"{self.META.strategy_id}:{underlying}:{day}:{minute}:{seq}"
 
 
+def has_expired_leg(pos: ComboPosition, *, today: date) -> bool:
+    """True when any leg's expiry is already PAST (strictly before `today`).
+
+    Such a combo cannot be priced off a live NBBO at all - the expired leg no longer trades,
+    so `last_nbbo` returns whatever stale quote was captured before it died. Its ONLY honest
+    exit is the day-roll settlement path (intrinsic at each leg's OWN expiry-day close,
+    runner._settle_expired); every other exit funnel would write the dead leg's stale quote
+    into the ledger the whole evidence base is graded from. Pure; runner applies it.
+    """
+    return any(ls.spec.expiry < today for ls in pos.legs)
+
+
 def expiry_backstop_due(pos: ComboPosition, *, today: date, minute: int,
                         session_close_min: int, lead_min: int = 10) -> bool:
-    """Global rail 1: a combo whose NEAREST leg expires today and whose strategy does not
-    settle-at-expiry must be closed by close-lead_min. Pure; runner applies it."""
-    return pos.nearest_expiry <= today and minute >= session_close_min - lead_min
+    """Global rail 1: a combo whose NEAREST leg expires TODAY and whose strategy does not
+    settle-at-expiry must be closed by close-lead_min. Pure; runner applies it.
+
+    Strictly TODAY (`==`, not `<=`): a combo whose nearest leg expired on an EARLIER session
+    has left the backstop's domain - it is a settlement case, and closing it at the live NBBO
+    would price a contract that no longer trades (fabricated P&L in the graded ledger), which
+    is exactly what the settlement deferral exists to refuse. A nearest expiry of today still
+    implies no leg is already expired, so the rail keeps its full coverage on expiry day.
+    """
+    return pos.nearest_expiry == today and minute >= session_close_min - lead_min
