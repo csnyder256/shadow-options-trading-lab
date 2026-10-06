@@ -160,6 +160,78 @@ def test_full_lifecycle_enter_mark_close_rebuild(tmp_path, monkeypatch):
     assert any(qdir.glob("*.jsonl"))
 
 
+# --------------------------------------------------------------------- day-roll state re-prime
+class MovingPriceHub(FakeHub):
+    """FakeHub whose SPY last trade (the observed underlying) is settable, so a test can walk
+    a position across sessions with a real excursion history."""
+
+    def __init__(self):
+        super().__init__()
+        self.S = 630.0
+
+    def poll_quotes(self, underlyings, leg_occs):
+        out = super().poll_quotes(underlyings, leg_occs)
+        for s in list(out):
+            if s == "SPY":
+                out[s] = FakeQuote(self.S - 0.1, self.S + 0.1, self.S)
+        return out
+
+
+class MultiDayHoldStrategy(ScriptStrategy):
+    """Enters once, then closes on/after `close_day` - the store-and-hold shape whose exit
+    record carries the MFE/MAE of the WHOLE hold."""
+    META = StrategyMeta(strategy_id="multiday_strat", version=1, name="multi-day hold",
+                        universe=("SPY",), dte_range=(30, 60), max_concurrent=1,
+                        event_policy=EventPolicy.TRADE_THROUGH,
+                        grading_basis=GradingBasis.DEBIT,
+                        defining_mechanism="directional_momentum",
+                        scan_interval_s=0.0, mark_interval_s=0.0)
+    close_day = "2026-07-22"
+
+    def manage(self, pos, ctx):
+        if ctx.day >= self.close_day:
+            return ExitAction(action="close", rule="multi_day_close", state={})
+        return None
+
+
+def test_day_roll_rebuild_preserves_the_running_underlying_excursion(tmp_path, monkeypatch):
+    """A position held across sessions must report the WHOLE hold's underlying MFE/MAE.
+
+    The day-roll rebuilds every open combo from its entry row, and `combo_from_entry` starts
+    the excursion at 0 - so before the mark re-prime a position that printed +11% and then
+    dipped in earlier sessions reported only the session it closed in. That silently corrupted
+    `underlying_mfe`/`underlying_mae` on every multi-day lab exit, the record the evidence base
+    is read from.
+    """
+    strat = MultiDayHoldStrategy()
+    sid = strat.META.strategy_id
+    monkeypatch.setattr(rsl, "build_all", lambda: {sid: strat})
+    monkeypatch.setattr(rsl, "load_state", lambda: {sid: {"state": "armed", "cohort_pin": "",
+                                                          "note": ""}})
+    monkeypatch.setattr(rsl, "upcoming_events", lambda now: [])
+    monkeypatch.setattr(rsl, "in_blackout", lambda now, events=None: None)
+    hub = MovingPriceHub()
+    clock = {"now": MONDAY_10AM}
+    core = rsl.StrategyLabCore(runtime_dir=tmp_path, log=lambda m: None, hub=hub,
+                               now_fn=lambda: clock["now"])
+    core.tick()                                      # session 1: enter at 630
+    hub.S = 700.0                                    # session-1 favorable print: +11.1%
+    core.tick()
+    clock["now"] = datetime(2026, 7, 21, 10, 0, tzinfo=NY)     # session 2 (day-roll rebuild)
+    hub.S = 600.0                                    # session-2 adverse print: -4.76%
+    core.tick()
+    clock["now"] = datetime(2026, 7, 22, 10, 0, tzinfo=NY)     # session 3: close at 640
+    hub.S = 640.0
+    core.tick()
+    exits = _read(core.ledger.strategy(sid).exits_path)
+    assert len(exits) == 1
+    x = exits[0]
+    assert x["rule"] == "multi_day_close"
+    # the excursion of the whole hold, not the closing session's own +1.6%/-1.6%:
+    assert x["underlying_mfe"] == pytest.approx(700.0 / 630.0 - 1.0, abs=1e-6)
+    assert x["underlying_mae"] == pytest.approx(600.0 / 630.0 - 1.0, abs=1e-6)
+
+
 def test_quarantine_contains_broken_strategy(tmp_path, monkeypatch):
     core, strat, sid = _core(tmp_path, monkeypatch, strat_cls=BrokenStrategy)
     for _ in range(6):

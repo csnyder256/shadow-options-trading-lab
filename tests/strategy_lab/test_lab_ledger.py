@@ -91,3 +91,45 @@ def test_open_positions_all_and_known_dirs(tmp_path):
     assert lab.known_strategy_dirs() == ["strat_a", "strat_b"]    # quotes dir excluded
     allpos = lab.open_positions_all()
     assert {k: len(v) for k, v in allpos.items()} == {"strat_a": 1, "strat_b": 1}
+
+
+def test_open_positions_reprimes_observation_state_from_marks(tmp_path):
+    """A rebuild must restore the RUNNING excursion and the mark-carried state, not restart them.
+
+    The day-roll rebuilds every open combo from its entry row; `combo_from_entry` starts
+    fav_max/fav_min at 0 and carried empty. The mark history is the only record of what the
+    position actually observed while it was open, so a position that printed +11% on day 1 and
+    closed days later used to report only the closing session's move in `underlying_mfe`/`_mae`
+    - and the state every mark carries (the `Strategy.rebuild` contract) was dropped at each
+    session boundary. The main shadow's rebuild re-primes exactly these from the same marks.
+    """
+    from atlas.strategy_lab.model import build_combo_mark_record
+
+    lab = LabLedger(tmp_path)
+    s = lab.strategy("strat_a")
+    rec = _entry("strat_a")                     # entry reference S = 630 (make_entry default)
+    s.write_entry(rec)
+    pid = rec["position_id"]
+    nb = [{"occ": "P1", "bid": 4.0, "ask": 4.2, "age_s": 1.0},
+          {"occ": "P2", "bid": 2.6, "ask": 2.8, "age_s": 1.0}]
+    for ts, S, phase in ((rec["ts_epoch"] + 60, 700.0, "ran_up"),
+                         (rec["ts_epoch"] + 120, 650.0, "retraced")):
+        s.write_mark(build_combo_mark_record(ts=ts, position_id=pid, strategy_id="strat_a",
+                                             legs_nbbo=nb, S=S, state={"phase": phase},
+                                             action="hold", rule=""))
+    pos = s.open_positions()[0]
+    # the day-1 extreme (700) survives, not just the last mark (650 -> ~0.0317)
+    assert pos.fav_max == pytest.approx(700.0 / 630.0 - 1.0, abs=1e-9)
+    assert pos.fav_min == 0.0                   # never traded below the entry reference
+    assert pos.last_mark_ts == rec["ts_epoch"] + 120
+    assert pos.carried == {"phase": "retraced"}  # carried state rides the marks across a rebuild
+
+
+def test_open_positions_without_marks_still_rebuild(tmp_path):
+    """No mark history (a position entered but not yet marked) must rebuild unchanged."""
+    lab = LabLedger(tmp_path)
+    s = lab.strategy("strat_a")
+    s.write_entry(_entry("strat_a"))
+    pos = s.open_positions()[0]
+    assert pos.fav_max == 0.0 and pos.fav_min == 0.0 and pos.last_mark_ts == 0.0
+    assert pos.carried == {}
