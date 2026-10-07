@@ -15,6 +15,13 @@ Doctrine (§3/§4 - §4 OVERRIDES all platform exit doctrine for this cohort):
     in this symbol would have won (reached a profitable 10-day exit before moving 2N adverse).
   * E3 Failsafe (Ch.4 p.19): when E1 is skipped by E2, enter instead on the 55-day breakout.
   * N = 20-day Wilder ATR (Ch.3): the only published price-distance unit; frozen at entry.
+  * COMPLETED-SESSION BARS ONLY (opts-fix-lab-partial-bar-channel-v1): every channel, the N
+    ATR and the E2 walk read daily bars STRICTLY BEFORE the current session. The vendor's
+    daily-history response carries today's PARTIAL bar, whose high/low already contain the
+    live print - with it in the window the E1/E3 test (ref_price > prior-channel high) can
+    never be true, so the strategy silently never fired intraday; it also let the X1 exit
+    channel and the E2 forward walk grade an unfinished session. The sibling level-reading
+    strategies (gap_fade_bull_put, squeeze_long_straddle, rsi2_*) filter it the same way.
   * Strike selection (ADAPTED, no options in source): long leg at the listed strike nearest
     spot (ATM); short leg nearest entry ± 2N in the trend direction (min one strike apart) - 
     2N is the source's own thesis-invalidation distance. DTE nearest monthly 45-75 (anchored
@@ -77,7 +84,8 @@ def _atr_wilder(bars: list, n: int) -> float | None:
 
 
 def _channel(bars: list, n: int, upto: int) -> tuple:
-    """(highest high, lowest low) of the `n` bars ending at index upto-1 (exclusive of upto)."""
+    """(highest high, lowest low) of the `n` bars ending at index upto-1 (exclusive of upto).
+    Callers pass COMPLETED-session bars only (see `_completed_bars`)."""
     window = bars[max(0, upto - n):upto]
     if not window:
         return (None, None)
@@ -87,10 +95,15 @@ def _channel(bars: list, n: int, upto: int) -> tuple:
 def _last_breakout_was_winner(bars: list, entry_n: int, exit_n: int, atr: float) -> bool | None:
     """E2: find the most recent prior 20-day breakout in `bars` and simulate whether it hit a
     profitable 10-day opposite-channel exit BEFORE moving 2N adverse. None = no prior breakout
-    resolvable (→ E2 cannot skip; treat as not-a-winner so E1 fires)."""
+    resolvable (→ E2 cannot skip; treat as not-a-winner so E1 fires).
+
+    `bars` are COMPLETED sessions (today's partial bar is filtered upstream), so the most
+    recent bar is itself a valid prior breakout - the scan starts at len(bars)-1. (Before the
+    completed-session filter the scan started at len(bars)-2 to skip the in-progress session;
+    with today excluded, skipping it would silently drop the most recent completed breakout.)"""
     if atr is None or atr <= 0:
         return None
-    for i in range(len(bars) - 2, entry_n, -1):     # most recent first
+    for i in range(len(bars) - 1, entry_n, -1):     # most recent first
         hh, ll = _channel(bars, entry_n, i)
         if hh is None:
             continue
@@ -138,8 +151,25 @@ class DonchianBreakoutDebitVert(Strategy):
         expected_fires_per_20_sessions=3.0)
     params = DonchianParams()
 
+    @staticmethod
+    def _completed_bars(ctx, sym: str, days: int) -> list:
+        """Daily bars for COMPLETED sessions only (ts strictly before ctx.day).
+
+        The vendor's daily-history response includes the CURRENT session's PARTIAL bar, whose
+        high/low already contain the live print. With it in the window the E1/E3 breakout test
+        (ref_price > prior-channel high) is arithmetically impossible intraday - ref_price can
+        never exceed today's own high - so the strategy silently never fired; the same partial
+        bar also let the X1 exit channel and the E2 forward walk grade an unfinished session.
+        Sibling level-reading strategies (gap_fade_bull_put, squeeze_long_straddle, rsi2_*) apply
+        the identical filter; the brief itself states the channel edges are "known before the
+        session", i.e. built from completed days."""
+        return [b for b in (ctx.hub.daily_history(sym, days=days) or [])
+                if str(getattr(b, "ts", ""))[:10] < ctx.day]
+
     def _breakout(self, bars: list, S: float, channel_days: int) -> int:
-        """+1 up / -1 down / 0 none: ref_price exceeds the prior-channel high/low by a tick."""
+        """+1 up / -1 down / 0 none: ref_price exceeds the prior-channel high/low.
+        `bars` are COMPLETED sessions - today's partial bar is excluded by `_completed_bars`,
+        so the channel really is the "preceding N days" the brief defines (E-TRIG)."""
         hh, ll = _channel(bars, channel_days, len(bars))
         if hh is None:
             return 0
@@ -205,7 +235,8 @@ class DonchianBreakoutDebitVert(Strategy):
         for sym in self.META.universe:
             if sym in held:
                 continue
-            bars = ctx.hub.daily_history(sym, days=max(p.history_days, p.failsafe_channel_days + 40))
+            bars = self._completed_bars(ctx, sym,
+                                        max(p.history_days, p.failsafe_channel_days + 40))
             if len(bars) < p.failsafe_channel_days + p.atr_days + 5:
                 continue
             S = ctx.hub.ref_price(sym)
@@ -269,8 +300,11 @@ class DonchianBreakoutDebitVert(Strategy):
             if direction < 0 and S >= entry_ref + p.stop_atr_mult * N:
                 return ExitAction(action="close", rule="turtle_x2_stop_2n",
                                   state={"S": round(S, 4), "stop": round(entry_ref + p.stop_atr_mult * N, 4)})
-        # X1: 10-day opposite-channel exit (from daily history)
-        bars = ctx.hub.daily_history(pos.underlying, days=p.exit_channel_days + 5) if ctx.hub else []
+        # X1: 10-day opposite-channel exit (from COMPLETED daily history - today's partial bar
+        # would fold the live low/high into the channel and let the exit fire on a session low
+        # that never broke the prior 10-day extreme, while MISSING a real break once the price
+        # recovers above today's low)
+        bars = self._completed_bars(ctx, pos.underlying, p.exit_channel_days + 5) if ctx.hub else []
         if len(bars) >= p.exit_channel_days:
             exh, exl = _channel(bars, p.exit_channel_days, len(bars))
             if direction > 0 and exl is not None and S <= exl:
