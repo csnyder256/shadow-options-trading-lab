@@ -101,6 +101,22 @@ class VrpShortStraddle(Strategy):
 
     # -- realized vol (row 9) --------------------------------------------------------------
     @staticmethod
+    def _completed_bars(ctx, bars) -> list:
+        """Daily bars for COMPLETED sessions only (ts strictly before ctx.day).
+
+        The vendor's daily-history response carries the CURRENT session's PARTIAL bar, whose
+        close is the live intraday print. HV (row 9) is prior-close information (module
+        docstring: "HV is prior-close by construction"), so that partial bar must never enter
+        the log-return series - with it in the window the trailing-252-return estimate ends on
+        a partial-day return the published 12-month window does not contain, and the VRP gate
+        reads a contaminated HV. Every other lab bar reader applies this same completed-session
+        filter (gap_fade_bull_put, squeeze_long_straddle, rsi2_*, donchian_breakout_debit_vert);
+        this is the one reader that did not. Bars without a `ts` (raw numbers / hand-built
+        fixtures) are kept - the filter removes only a bar that is provably today.
+        """
+        return [b for b in (bars or []) if str(getattr(b, "ts", ""))[:10] < ctx.day]
+
+    @staticmethod
     def _closes(bars) -> list:
         """Positive closes from daily-history bars (TBar-like .close, dict, or raw number)."""
         out = []
@@ -208,7 +224,7 @@ class VrpShortStraddle(Strategy):
                                     "expiry": exp, "S_ref": round(S_ref, 4)})
                 continue
             K, call_row, put_row = pair
-            hv = self.realized_vol(ctx.hub.daily_history(sym))
+            hv = self.realized_vol(self._completed_bars(ctx, ctx.hub.daily_history(sym)))
             if hv is None:
                 self._journal(ctx, {"event": "vrp_no_history", "symbol": sym,
                                     "need_closes": self.params.hv_lookback_td + 1})

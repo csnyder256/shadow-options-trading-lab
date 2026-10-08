@@ -8,11 +8,12 @@ import dataclasses
 import math
 import statistics
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
 
+from atlas.collect.tradier_data import TBar
 from atlas.strategy_lab.hub import MarketHub
 from atlas.strategy_lab.strategies.vrp_short_straddle import VrpParams, VrpShortStraddle
 from atlas.strategy_lab.strategy import StrategyContext
@@ -190,6 +191,33 @@ def test_insufficient_history_skips():
     assert s.scan(_ctx(WED, hub, journal=logs.append)) == []
     assert [e["event"] for e in logs] == ["vrp_no_history"]
     assert logs[0]["need_closes"] == 253
+
+
+def test_realized_vol_uses_completed_sessions_only():
+    """Row 9 + module docstring: HV is prior-close information. The vendor's daily-history
+    response includes TODAY's partial bar (the live print); folding it into the log-return
+    series ends the trailing-252-return window on a partial-day return the published window
+    does not contain. The completed-session filter must drop it, so HV matches the completed
+    series exactly. Discriminating: today's close is far off the trend, so including it swamps
+    HV (~0.70 vs ~0.08) and flips the VRP gate sign - the buggy code blocks an entry the
+    corrected code makes.
+    """
+    hub = FakeHub()
+    hub.chains[("SPY", "2026-08-21")] = _spy_chain()
+    completed = _alt_closes(100.0, 100.5, n=253)               # 253 completed closes
+    bars = [TBar(ts=(date(2026, 7, 21) - timedelta(days=252 - i)).isoformat(),
+                 open=b.close, high=b.close, low=b.close, close=b.close, volume=1e6)
+            for i, b in enumerate(completed)]
+    bars.append(TBar(ts="2026-07-22", open=200.0, high=200.0, low=200.0, close=200.0,
+                     volume=1e5))                              # today's PARTIAL bar (live print)
+    hub.hist["SPY"] = bars
+    s = VrpShortStraddle()
+    proposals = s.scan(_ctx(WED, hub))
+    assert len(proposals) == 1, "today's partial bar must not contaminate HV into blocking entry"
+    hv = proposals[0].signal["hv"]
+    assert hv == round(_hand_hv(completed), 4)                 # completed-only series, exactly
+    assert hv != round(_hand_hv(bars), 4)                      # NOT the contaminated series
+    assert hv < proposals[0].signal["iv"]                      # VRP still positive
 
 
 def test_vix_fallback_and_no_iv_skip():
