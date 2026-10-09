@@ -116,6 +116,40 @@ def test_backspread_direction_adaptive():
     assert all(p.kind == "put_backspread" for p in props)
 
 
+def test_backspread_sma_uses_completed_sessions_only():
+    """opts-fix-lab-partial-bar-sma-v1: the trend SMA must be built from COMPLETED sessions.
+
+    The vendor's daily-history response carries TODAY's partial bar (close = the live print).
+    Folding it into the trend SMA shortened the window to trend_sma_days-1 completed closes plus
+    the live print, so the direction (call vs put) moved with the intraday tape and could flip
+    near the crossover. Here the oldest of the 20 completed closes (100) sits far below the
+    other 19 (200): the true 20-session SMA is 195 while the contaminated 19+print average is
+    199.85, and S=197 sits between them. The corrected code reads S >= 195 -> call side; the
+    buggy code read S < 199.85 -> put side. Discriminating: the assertion fails on the old code.
+    """
+    completed = [TBar(ts=(date(2026, 7, 22) - timedelta(days=20 - i)).isoformat(),
+                     open=c, high=c, low=c, close=c, volume=1e6)
+                 for i, c in enumerate([100.0] + [200.0] * 19)]
+    today_bar = TBar(ts="2026-07-22", open=197.0, high=197.0, low=197.0, close=197.0,
+                     volume=1e5)                                # today's PARTIAL bar
+    hub = Hub(S=197.0, vix_pctile=30.0, hist=completed + [today_bar])
+    s = Backspread1x2()
+    dt = datetime(2026, 7, 22, 10, 0, tzinfo=NY)
+    ctx = _ctx(dt, hub)
+
+    # the filter drops exactly today's partial bar, keeping all 20 completed sessions
+    bars = Backspread1x2._completed_bars(ctx, "SPY", 40)
+    assert len(bars) == 20 and all(str(b.ts)[:10] < ctx.day for b in bars)
+    assert Backspread1x2._sma(bars, 20) == 195.0                   # completed-only SMA
+
+    # S=197 is above the completed 20-session SMA (195) -> call side; the contaminated
+    # SMA (199.85) would have flipped it to the put side.
+    props = [p for p in s.scan(ctx) if p.underlying == "SPY"]
+    assert len(props) == 1
+    assert props[0].kind == "call_backspread"
+    assert props[0].signal["sma"] == 195.0
+
+
 def test_backspread_meta():
     m = Backspread1x2.META
     assert m.grading_basis.value == "max_loss" and m.settle_at_expiry is False
