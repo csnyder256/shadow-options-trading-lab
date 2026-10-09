@@ -15,6 +15,13 @@ Doctrine (§3/§4 - §4 OVERRIDES all platform exit doctrine for this cohort):
   * Direction (ADAPTED - the source's directional trigger is qualitative, "great upside/
     downside potential"): momentum sign of ref_price vs its trend SMA - above → call
     backspread (up thesis), below → put backspread (down thesis). Tagged ADAPTED (row 10-ish).
+    COMPLETED-SESSION BARS ONLY (opts-fix-lab-partial-bar-sma-v1): the trend SMA is built from
+    daily bars STRICTLY BEFORE the current session. The vendor's daily-history response carries
+    today's PARTIAL bar (close = the live print), and folding it into the window made the
+    "trend_sma_days" average one completed session short and let the direction move with the
+    intraday tape. The sibling level readers (gap_fade_bull_put, squeeze_long_straddle, rsi2_*,
+    vrp_short_straddle, donchian_breakout_debit_vert) filter it the same way; this is the one
+    reader that did not.
   * Low-IV gate (§3, McMillan p.841 "used if implied volatility were in a low percentile"):
     enter only when VIX 252d percentile is LOW (vol_regime fallback ladder; unavailable →
     enter flagged gate_unavailable). No numeric percentile is published (ADAPTED default).
@@ -78,6 +85,25 @@ class Backspread1x2(Strategy):
         scan_interval_s=300.0, mark_interval_s=300.0,
         expected_fires_per_20_sessions=2.0)
     params = BackspreadParams()
+
+    @staticmethod
+    def _completed_bars(ctx, sym: str, days: int) -> list:
+        """Daily bars for COMPLETED sessions only (ts strictly before ctx.day).
+
+        The vendor's daily-history response carries the CURRENT session's PARTIAL bar, whose
+        close is the live intraday print. The trend SMA is the strategy's direction proxy
+        (ref_price vs its own average), so folding that partial bar into the window silently
+        shortens it: `_sma(bars, trend_sma_days)` then averages trend_sma_days-1 completed
+        closes plus the live print - the "20-day" SMA is really a 19-session one whose value
+        moves with the intraday tape, and the call/put direction can flip near the trend
+        crossover depending only on whether the provider returned a partial bar. Every other
+        lab bar reader applies this same completed-session filter (gap_fade_bull_put,
+        squeeze_long_straddle, rsi2_*, vrp_short_straddle, donchian_breakout_debit_vert); this
+        is the one reader that did not. Bars without a `ts` (raw numbers / hand-built fixtures)
+        are kept - the filter removes only a bar that is provably today.
+        """
+        return [b for b in (ctx.hub.daily_history(sym, days=days) or [])
+                if str(getattr(b, "ts", ""))[:10] < ctx.day]
 
     @staticmethod
     def _sma(bars: list, n: int) -> float | None:
@@ -165,7 +191,8 @@ class Backspread1x2(Strategy):
         for sym in self.META.universe:
             if sym in held:
                 continue
-            bars = ctx.hub.daily_history(sym, days=max(p.history_days, p.trend_sma_days + 5))
+            bars = self._completed_bars(ctx, sym,
+                                        max(p.history_days, p.trend_sma_days + 5))
             sma = self._sma(bars, p.trend_sma_days)
             S = ctx.hub.ref_price(sym)
             if S <= 0 or sma is None:
