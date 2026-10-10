@@ -1,5 +1,5 @@
-"""MarketHub: budget governor priorities, chain TTL/degradation, staleness book, greeks
-round-trip (lab-strategy-runtime-v1). Fake client + fake clock - no network."""
+"""MarketHub: budget governor priorities, chain/history TTL + degradation, staleness book,
+greeks round-trip (lab-strategy-runtime-v1). Fake client + fake clock - no network."""
 
 from __future__ import annotations
 
@@ -7,8 +7,9 @@ import json
 from datetime import date
 
 from atlas.options.vendor.blackscholes import bs_price
-from atlas.strategy_lab.hub import (CAP_PER_MIN, P0_EXIT_QUOTES, P2_MANAGE_CHAIN,
-                                    P3_SCAN_CHAIN, BudgetGovernor, MarketHub)
+from atlas.strategy_lab.hub import (CAP_PER_MIN, HISTORY_CACHE_MAX, HISTORY_TTL_S,
+                                    P0_EXIT_QUOTES, P2_MANAGE_CHAIN, P3_SCAN_CHAIN,
+                                    BudgetGovernor, MarketHub)
 
 
 class FakeClock:
@@ -125,3 +126,79 @@ def test_file_fed_context(tmp_path):
                                            "timing_reliable": True}}}), encoding="utf-8")
     assert hub.vol_regime()["vix_close"] == 18.77
     assert hub.earnings_week()["TSLA"]["timing_reliable"] is True
+
+
+# --------------------------------------------------------------- daily-history cache
+def test_history_cache_ttl(tmp_path):
+    """Daily bars are a function of (symbol, days) that changes at most once a session, yet
+    every bar reader re-requests them per symbol per scan; they must be cached, and refreshed
+    once the TTL lapses."""
+    hub, client, clock, _ = _hub(tmp_path)
+    assert hub.daily_history("SPY", days=260) == [1] * 260
+    assert hub.daily_history("SPY", days=260) == [1] * 260
+    assert client.calls["hist"] == 1                     # second read is a cache hit
+    clock.advance(HISTORY_TTL_S + 1)
+    hub.daily_history("SPY", days=260)
+    assert client.calls["hist"] == 2                     # TTL expired -> refetched
+
+
+def test_history_cache_keys_by_window(tmp_path):
+    """Two strategies reading different windows of the same symbol must not share one entry."""
+    hub, client, clock, _ = _hub(tmp_path)
+    hub.daily_history("SPY", days=260)
+    hub.daily_history("SPY", days=45)
+    hub.daily_history("SPY", days=260)
+    hub.daily_history("QQQ", days=260)
+    assert client.calls["hist"] == 3                     # (SPY,260), (SPY,45), (QQQ,260)
+
+
+def test_warm_history_cache_consumes_no_budget(tmp_path):
+    """A cache hit must not touch the rolling-minute governor: that is the whole point - the
+    uncached read was the single largest consumer of the shared token slice and pushed the
+    governor into the band that sheds P3 ENTRY chains."""
+    hub, client, clock, events = _hub(tmp_path, cap=1)
+    assert hub.daily_history("SPY", days=260) == [1] * 260
+    used_after_first = hub.governor.used()
+    assert used_after_first == 1
+    assert hub.daily_history("SPY", days=260) == [1] * 260
+    assert client.calls["hist"] == 1                     # served from cache
+    assert hub.governor.used() == used_after_first       # and no new budget stamp
+
+
+def test_stale_history_serves_the_cached_copy_when_budget_denies_the_refresh(tmp_path, monkeypatch):
+    """History is prior-close information, not a live price: when the budget denies the
+    refresh the last completed read is served (never [] and never a skipped symbol), and the
+    degrade is journaled. TTL shrunk so a stale read can be staged inside one rolling minute."""
+    monkeypatch.setattr("atlas.strategy_lab.hub.HISTORY_TTL_S", 5.0)
+    hub, client, clock, events = _hub(tmp_path, cap=1)
+    assert hub.daily_history("SPY", days=260) == [1] * 260
+    clock.advance(6)                                     # stale; the 60s budget window holds
+    assert hub.governor.used() == 1
+    assert hub.daily_history("SPY", days=260) == [1] * 260   # last completed read, not []
+    assert client.calls["hist"] == 1                         # the refresh was denied
+    assert any(e["event"] == "lab_data_degraded" for e in events)
+
+
+def test_history_fetch_error_serves_the_cached_copy(tmp_path, monkeypatch):
+    """A transient provider error must not blank the signal input once a copy exists."""
+    monkeypatch.setattr("atlas.strategy_lab.hub.HISTORY_TTL_S", 5.0)
+    hub, client, clock, events = _hub(tmp_path)
+    assert hub.daily_history("SPY", days=260) == [1] * 260
+    clock.advance(6)
+
+    def boom(u, days=260):
+        client.calls["hist"] += 1
+        raise RuntimeError("provider down")
+
+    client.get_daily_history = boom
+    assert hub.daily_history("SPY", days=260) == [1] * 260
+    assert any(e["event"] == "hub_history_error" for e in events)
+
+
+def test_history_cache_is_hard_bounded(tmp_path):
+    """The keyspace grows with settlement window sizes, so the cache keeps the newest
+    HISTORY_CACHE_MAX windows rather than growing without limit."""
+    hub, client, clock, _ = _hub(tmp_path, cap=100000)
+    for i in range(HISTORY_CACHE_MAX + 10):
+        hub.daily_history("SPY", days=10 + i)
+    assert len(hub._history) == HISTORY_CACHE_MAX
