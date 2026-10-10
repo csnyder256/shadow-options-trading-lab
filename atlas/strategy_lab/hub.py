@@ -2,10 +2,11 @@
 
 Registered lab-strategy-runtime-v1. Why shared: chain cost scales with UNIVERSE, not with
 strategy count - a bull-put-spread scan and an iron-condor scan of SPY ~45DTE hit the same
-cached chain. Budget reality (M0 finding E3): there is NO second Tradier token - the lab
-shares the single production token's ~120/min with the main shadow (self-cap 60/min), so the
-lab's slice is CAP_PER_MIN=40 PERMANENTLY, enforced here by a rolling-minute governor with a
-priority ladder:
+cached chain, and every daily-bar reader hits the same cached history for its (symbol, window)
+(opts-fix-lab-history-cache-v1). Budget reality (M0 finding E3): there is NO second Tradier
+token - the lab shares the single production token's ~120/min with the main shadow (self-cap
+60/min), so the lab's slice is CAP_PER_MIN=40 PERMANENTLY, enforced here by a rolling-minute
+governor with a priority ladder:
 
     P0 open-position leg quotes   never shed (feed exits)
     P1 underlying quotes          shed last
@@ -38,7 +39,10 @@ CAP_PER_MIN = 40
 DEGRADE_FRAC = 0.8
 CHAIN_TTL_S = 300.0
 EXPIRATIONS_TTL_S = 3600.0
+HISTORY_TTL_S = 3600.0       # daily bars are stable within a session (change at the close);
+#                              far shorter than the overnight gap, so the cache is cold each open
 STALE_QUOTE_S = 120.0
+HISTORY_CACHE_MAX = 128      # bound on distinct (symbol, days) daily-history cache entries
 SELECTION_R = 0.04            # flat selection-rate convention (label: PLATFORM-POLICY)
 
 P0_EXIT_QUOTES, P1_UNDERLYING, P2_MANAGE_CHAIN, P3_SCAN_CHAIN = 0, 1, 2, 3
@@ -104,6 +108,7 @@ class MarketHub:
         self.clock = clock
         self._chains: dict[tuple, CachedChain] = {}
         self._expirations: dict[str, CachedChain] = {}
+        self._history: dict[tuple, CachedChain] = {}
         self._last_quotes: dict[str, tuple] = {}      # sym -> (bid, ask, ts)
 
     # ---------------------------------------------------------------- quotes
@@ -210,14 +215,52 @@ class MarketHub:
     # ---------------------------------------------------------------- daily history
     def daily_history(self, underlying: str, days: int = 260, *,
                       priority: int = P2_MANAGE_CHAIN) -> list:
+        """Cached daily bars for one (symbol, `days`) window.
+
+        Daily history is a function of (symbol, `days`) that changes at most once per session
+        (at the close), yet EVERY lab bar reader re-requests it per symbol on every scan - the
+        level/momentum family (donchian, vrp, backspread, rsi2_overbought, rsi2_oversold,
+        squeeze, gap_fade, tsmom) plus the manage-path channel readers. Left uncached it was
+        the single largest consumer of the lab's shared production-token slice: a full-session
+        simulation of the armed roster fired ~2,160 history requests against ~300 chain
+        requests and drove the rolling-minute governor to its 40/min cap, which sheds P3 ENTRY
+        chains (a strategy that cannot fetch a chain cannot enter). The cache is keyed per
+        window and served under HISTORY_TTL_S - daily bars hold within a session and the TTL is
+        far shorter than the overnight gap, so a warm read consumes no budget and the cache is
+        always cold at the next open.
+
+        History is prior-close information, NOT a live price: unlike a scan chain - which must
+        fail to "no entry" rather than price a stale book - a cached copy is served when the
+        budget denies the refresh (and when a fetch errors), so a tight budget degrades the
+        signal input to its last completed read instead of silently skipping the symbol.
+        """
+        u = underlying.upper()
+        key = (u, int(days))
+        c = self._history.get(key)
+        if c and self.clock() - c.fetched < HISTORY_TTL_S:
+            return c.rows
         if not self.governor.allow(priority):
-            return []
+            self._note_degraded()
+            return c.rows if c else []
         try:
-            return self.client.get_daily_history(underlying.upper(), days=days)
+            rows = self.client.get_daily_history(u, days=days)
         except Exception as exc:  # noqa: BLE001
             self.journal({"event": "hub_history_error", "ts_epoch": time.time(),
                           "detail": f"{type(exc).__name__}: {exc}", "underlying": underlying})
-            return []
+            return c.rows if c else []
+        self._history[key] = CachedChain(rows, self.clock())
+        self._trim_history()
+        return rows
+
+    def _trim_history(self) -> None:
+        """Hard-bound the history cache: keep the HISTORY_CACHE_MAX most recently fetched
+        (symbol, days) windows and drop the oldest. Settlement reads size `days` from each
+        expiry's age, so the keyspace would otherwise creep up over a long-lived process."""
+        extra = len(self._history) - HISTORY_CACHE_MAX
+        if extra <= 0:
+            return
+        for k in sorted(self._history, key=lambda k: self._history[k].fetched)[:extra]:
+            del self._history[k]
 
     # ---------------------------------------------------------------- self-computed greeks
     @staticmethod
