@@ -432,6 +432,18 @@ class StrategyLabCore:
         self.log(f"EXIT {pos.position_id} rule={rule} worst=${net:.0f}")
 
     def _manage_positions(self, sid: str, strat, ctx, quotes) -> None:
+        """Mark each open combo, then run the global expiry-day backstop and the strategy's
+        own manage().
+
+        The backstop's session bound is the combo's OWN underlying options close, not the
+        strategy's (opts-fix-lab-backstop-close-v1). ctx.session_close_min is built once per
+        strategy from options_close_minute(today, universe[0]), so a mixed universe whose first
+        member is SPY carries the late-close index-ETF bound (975) even for a single-name combo
+        that stops quoting at the 960 equity close - the rail then fired up to 15 minutes AFTER
+        the contracts stopped trading and priced a stale pre-close NBBO into the ledger the
+        WORST-fill evidence is graded from. Deriving it per position matches the tick-gate fix
+        (67bb29c) that made ctx.session_close_min per-underlying.
+        """
         today = date.fromisoformat(self._day)
         for pos in list(self.positions.get(sid, [])):
             S = self._S_of(quotes, pos.underlying)
@@ -448,7 +460,8 @@ class StrategyLabCore:
                 legs_nbbo=book, S=S, state=dict(pos.carried), action="hold", rule=""))
             if (not strat.META.settle_at_expiry
                     and expiry_backstop_due(pos, today=today, minute=ctx.minute,
-                                            session_close_min=ctx.session_close_min)):
+                                            session_close_min=options_close_minute(
+                                                today, pos.underlying))):
                 self._close_position(sid, pos, "expiry_backstop", book, S,
                                      {"rail": "global", "minute": ctx.minute})
                 continue
