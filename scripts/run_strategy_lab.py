@@ -61,6 +61,32 @@ SETTLE_HISTORY_PAD_DAYS = 10
 LATE_TICK_GRACE_MIN = 20             # ticks continue this far past the latest options close
 
 
+def _valid_nbbo(nb) -> bool:
+    """True when `nb` is a usable live NBBO: a 3+ tuple of finite numbers with 0 <= bid <= ask,
+    ask > 0 and age >= 0. A dead (0x0), crossed, non-finite or age-negative quote carries NO
+    price at all.
+
+    The settlement path has always applied exactly this test to a live leg ("a live leg with no
+    valid NBBO - never guess"). It is now shared with the mark/close book (`_leg_book`) so the
+    same rule holds everywhere the runner prices a combo: no lab exit and no lab mark is ever
+    written off a dead quote. Without it a dead leg quote reads as a zero buyback cost, which
+    satisfies the 50%-of-credit profit target in ic_45d16d_managed (and its 21-DTE sibling rule
+    in jade_lizard / strangle_45d16d_managed) and books the FULL entry credit as realized
+    profit, while a zero bid on an ITM short call reads as "at parity" in atm_calendar_low_iv's
+    assignment guard - fabricated evidence the grader's identity and denominator gates cannot
+    see, because all-zero fills are internally consistent.
+    """
+    if nb is None:
+        return False
+    try:
+        if len(nb) < 3:
+            return False
+        return (all(isinstance(v, (int, float)) and math.isfinite(v) for v in nb[:3])
+                and 0 <= nb[0] <= nb[1] and nb[1] > 0 and nb[2] >= 0)
+    except TypeError:
+        return False                 # not a sized/numeric 3-tuple at all -> no price
+
+
 def _paths(runtime_dir: Path) -> dict:
     return {"runtime": runtime_dir,
             "lock": runtime_dir / "strategy_lab.lock",
@@ -274,9 +300,7 @@ class StrategyLabCore:
                         legs_close.append({"occ": ls.spec.occ, "bid": 0.0, "ask": 0.0})
                         continue
                     nb = self.hub.last_nbbo(ls.spec.occ) if self.hub is not None else None
-                    if (nb is None or len(nb) < 3 or not all(
-                            isinstance(v, (int, float)) and math.isfinite(v) for v in nb[:3])
-                            or not 0 <= nb[0] <= nb[1] or nb[1] <= 0 or nb[2] < 0):
+                    if not _valid_nbbo(nb):
                         live_missing = True
                         break                      # a live leg with no quote - never guess
                     live_quote_ages[ls.spec.occ] = nb[2]
@@ -403,10 +427,23 @@ class StrategyLabCore:
 
     # -- marks / manage ----------------------------------------------------
     def _leg_book(self, pos) -> list | None:
+        """The live book for a combo, or None when ANY leg lacks a usable NBBO.
+
+        `_valid_nbbo` is the same test `_settle_expired` applies to a live leg: a dead (0x0),
+        crossed, non-finite or age-negative quote carries NO price. Returning None makes the
+        tick journal a partial mark and skip BOTH exit funnels (the expiry backstop and the
+        strategy's manage()), so no exit and no mark can ever be priced off a dead quote. That
+        matters because the managed-close rules are mid-price comparisons: a dead leg quote
+        reads as a zero buyback cost, which satisfies the 50%-of-credit profit target
+        (ic_45d16d_managed, jade_lizard) and books the FULL entry credit as profit, and a zero
+        bid on an ITM short call reads as "at parity" in atm_calendar_low_iv's assignment guard.
+        A stale-but-live quote is still accepted (its age is stamped into the mark) - only a
+        quote that carries no price at all is refused.
+        """
         book = []
         for ls in pos.legs:
             nb = self.hub.last_nbbo(ls.spec.occ) if self.hub else None
-            if nb is None:
+            if not _valid_nbbo(nb):
                 return None
             book.append({"occ": ls.spec.occ, "bid": nb[0], "ask": nb[1], "age_s": nb[2]})
         return book

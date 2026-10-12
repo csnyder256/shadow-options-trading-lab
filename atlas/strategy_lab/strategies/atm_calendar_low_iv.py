@@ -197,12 +197,16 @@ class AtmCalendarLowIv(Strategy):
         if short is None:                              # malformed combo: runner rails own it
             return None
         # Row 12 (SOURCE-VERBATIM, urgent - checked first): short call at parity while ITM.
+        # A LIVE bid is required: the published test is "the short call trades at parity"
+        # (bid <= intrinsic), and a zero/absent bid satisfies it trivially - a dead quote is
+        # not evidence of parity, it is the absence of a market. Requiring bid > 0 keeps the
+        # guard's full reach on a real book and stops it firing a fabricated urgent close.
         S = ctx.hub.ref_price(pos.underlying)
         nbbo = ctx.hub.last_nbbo(short.spec.occ)
         if S > 0 and nbbo is not None:
             bid = float(nbbo[0])
             intr = max(0.0, S - short.spec.strike)
-            if intr > 0 and bid <= intr:
+            if intr > 0 and 0.0 < bid <= intr:
                 return ExitAction(action="close", rule="short_parity_assignment_guard",
                                   state={"S": round(S, 4), "short_bid": round(bid, 4),
                                          "intrinsic": round(intr, 4),
