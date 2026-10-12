@@ -279,13 +279,22 @@ class Ic45d16dManaged(Strategy):
 
     # -- manage (rows 12-17): 50% credit buyback + 21-DTE, nothing else -----
     def manage(self, pos, ctx) -> ExitAction | None:
+        """Rows 12/13 profit target, row 14 time exit. A leg quote that carries no price at all
+        (dead 0x0) holds: the profit rule is a MID comparison, and a zero buyback cost would read
+        as "100% of the credit captured" and book the FULL entry credit as realized profit. Every
+        sibling quote-reading manage() (jade_lizard, strangle_45d16d_managed, vrp_short_straddle,
+        backspread_1x2, short_put_45d30d_managed) already refuses a dead quote; this is the one
+        reader that did not."""
         p = self.params
         net_close = 0.0
         for ls in pos.legs:
             nb = ctx.hub.last_nbbo(ls.spec.occ)
             if nb is None:
                 return None                    # unquoted leg -> hold, never a blind exit
-            net_close += ls.spec.side * ls.spec.qty * ((float(nb[0]) + float(nb[1])) / 2.0)
+            bid, ask = max(0.0, float(nb[0])), max(0.0, float(nb[1]))
+            if bid <= 0 and ask <= 0:
+                return None                    # dead (0x0) quote -> no price to compare -> hold
+            net_close += ls.spec.side * ls.spec.qty * ((bid + ask) / 2.0)
         cost_to_close = -net_close             # positive debit to buy the condor back
         entry_credit = -float(pos.net_open.get("optimistic") or 0.0)  # mid ledger (row 12)
         dte = (pos.nearest_expiry - ctx.dt_et.date()).days
