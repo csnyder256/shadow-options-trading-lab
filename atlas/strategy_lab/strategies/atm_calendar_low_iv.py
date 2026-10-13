@@ -30,6 +30,17 @@ Doctrine (brief §3/§4 - overrides ALL platform exit doctrine for this cohort):
     SOURCE-VERBATIM, McMillan p. 194). NO stop-loss (row 13: hold through adverse
     breakouts, risk capped at the debit) and NO profit target (row 14: the 2x-debit
     aspiration is recorded, NOT armed) - manage() implements exactly the two rules above.
+  * ENTRY MUST LEAVE ROOM FOR THE HOLD (opts-fix-lab-calendar-front-hold-v1): the front leg
+    must sit MORE than front_exit_trading_days (5) TRADING days out, so the T-5 exit cannot
+    fire on the entry session. A 7-calendar-day front expiry is exactly 5 trading days away
+    (same weekday, five weekdays between), so the old windowed pick - the earliest listing
+    with dte in [7, 10] - selected a front leg that the strategy's OWN exit rule closed at
+    the first mark: the calendar was entered and exited minutes later, paying the spread
+    twice, booking a guaranteed loss with no hold and no theta, and writing an
+    entry/exit pair into the graded evidence. The [7,10] DTE window is unchanged (front_dte_min
+    still 7); a listing already inside the exit window is simply not eligible, so the pick
+    falls to the next listed expiry that leaves room, and when NOTHING in the window leaves
+    room the entry is skipped and journaled (cal_front_inside_exit_window) instead of fired.
   * Universe: ETF subset SPY/QQQ/IWM of the brief's row-18 tier, so the earnings gate
     (row 9) is moot - ETFs exempt. One open calendar per symbol (row 20); 1 spread,
     account-blind (row 17). Legs list order is [short front, long back].
@@ -84,17 +95,28 @@ class AtmCalendarLowIv(Strategy):
     params = AtmCalendarParams()
 
     # -- expiry selection (windowed; earliest listed inside window, exemplar idiom) ------
-    def _expiry_in_window(self, ctx, sym: str, today: date, lo: int, hi: int):
+    def _expiry_in_window(self, ctx, sym: str, today: date, lo: int, hi: int,
+                          *, min_trading_days: int = 0):
         """(expiry_iso, dte) for the earliest listed expiration with dte in [lo, hi];
-        (None, None) when nothing is listed in the window."""
+        (None, None) when nothing is listed in the window.
+
+        `min_trading_days` (front leg only) additionally requires at least that many TRADING
+        days to the expiry, so a front leg already inside the T-5 exit window is never chosen -
+        see the module docstring's ENTRY MUST LEAVE ROOM FOR THE HOLD note.
+        """
         best, best_dte = None, None
         for e in ctx.hub.expirations(sym):
             try:
                 y, m, d = map(int, str(e).split("-"))
-                dte = (date(y, m, d) - today).days
+                expiry = date(y, m, d)
+                dte = (expiry - today).days
             except ValueError:
                 continue
-            if lo <= dte <= hi and (best_dte is None or dte < best_dte):
+            if not (lo <= dte <= hi):
+                continue
+            if min_trading_days and self._trading_days_until(today, expiry) < min_trading_days:
+                continue
+            if best_dte is None or dte < best_dte:
                 best, best_dte = str(e), dte
         return best, best_dte
 
@@ -129,13 +151,23 @@ class AtmCalendarLowIv(Strategy):
             if S_ref <= 0:
                 continue
             front, front_dte = self._expiry_in_window(
-                ctx, sym, today, self.params.front_dte_min, self.params.front_dte_max)
+                ctx, sym, today, self.params.front_dte_min, self.params.front_dte_max,
+                min_trading_days=self.params.front_exit_trading_days + 1)
             back, back_dte = self._expiry_in_window(
                 ctx, sym, today, self.params.back_dte_min, self.params.back_dte_max)
             if front is None or back is None or back_dte <= front_dte:
                 if ctx.journal:                        # covered shape needs back AFTER front
-                    ctx.journal({"event": "cal_no_expiry_pair", "symbol": sym,
-                                 "front": front, "back": back})
+                    # Name the real reason: a front listing that exists in the [7,10] window
+                    # but sits inside the T-5 exit window is NOT the same defect as "nothing
+                    # listed", and the funnel report must be able to tell them apart.
+                    raw_front, raw_dte = self._expiry_in_window(
+                        ctx, sym, today, self.params.front_dte_min, self.params.front_dte_max)
+                    inside = front is None and raw_front is not None
+                    ctx.journal({"event": ("cal_front_inside_exit_window" if inside
+                                           else "cal_no_expiry_pair"),
+                                 "symbol": sym, "front": front, "back": back,
+                                 "front_in_window": raw_front, "front_dte": raw_dte,
+                                 "front_exit_trading_days": self.params.front_exit_trading_days})
                 continue
             front_calls = self._twosided_calls(ctx.hub.chain(sym, front))
             back_calls = self._twosided_calls(ctx.hub.chain(sym, back))
