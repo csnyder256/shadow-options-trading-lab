@@ -13,8 +13,9 @@ Doctrine (brief §3/§4 - §4 overrides ALL platform exit doctrine for this coho
     the source, row 9). CPI/NFP-eve nights are TRADED THROUGH and TAGGED for split grading
     (row 18, PLATFORM-POLICY) - the brief records NO event stand-down; 8:30 a.m. releases
     land inside the close→open hold, FOMC (2 p.m.) is outside it.
-  * Entry: last minutes before the session close (row 7 + §9: snapshot ~3:45-4:00 p.m. ET
-    → [session_close_min-15, session_close_min)), sell 1 OTM call + 1 OTM put (row 3),
+  * Entry: the last minutes before the EQUITY session close (row 7: entry_time = "last chain
+    snapshot at/before 4:00 p.m. ET"; §9: "snapshot at ~3:45-4:00 p.m. ET daily for entry") →
+    [equity_close-15, equity_close), sell 1 OTM call + 1 OTM put (row 3),
     each at the listed strike nearest |Δ|=0.25 (row 4), accept 0.15 ≤ |Δ| ≤ 0.30 on the
     selected strike else skip the symbol that night (row 5). Expiry = NEXT trading session
     (row 6): the nearest listed expiration STRICTLY after today within META.dte_range
@@ -49,6 +50,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
+from atlas.options.session_calendar import session_close_minute
+
 from ..strategy import (EventPolicy, ExitAction, GradingBasis, ProposedCombo, Strategy,
                         StrategyMeta)
 
@@ -61,8 +64,9 @@ _OPEN_T = time(9, 30)          # row 11: "An overnight period is from 4:15 pm to
 @dataclass(frozen=True)
 class OvernightStrangleParams:
     """Tunables (the pre-registered tweak neighborhood; everything else is doctrine).
-    entry_lead_min: row 7 + §9 - entry snapshot ~3:45-4:00 p.m. ET → last 15 min before the
-    session close (SOURCE-RANGE; relative to session_close_min so half days inherit it).
+    entry_lead_min: row 7 + §9 - entry snapshot ~3:45-4:00 p.m. ET → the last 15 min before
+    the EQUITY session close (SOURCE-RANGE; half days inherit it through the calendar, so
+    2026-11-27 gives [12:45, 13:00) from its 13:00 close).
     delta_target: row 4 (ADAPTED - 25Δ is the boundary of the published most-negative
     0.1<|Δ|<0.25 bucket). delta_band_lo/hi: row 5 tolerance band 0.15-0.30, selected-strike
     out-of-band → skip symbol that night (PLATFORM-POLICY). exit_minute_from: row 11 - 
@@ -155,11 +159,32 @@ class Overnight1dteStrangle(Strategy):
                 kinds.append(k)
         return kinds
 
+    # -- entry window (rows 7/§9) ------------------------------------------
+    def _entry_window(self, ctx) -> tuple:
+        """(start, end) minutes-of-day ET of the closing entry window.
+
+        Brief row 7 records entry_time = "last chain snapshot at/before 4:00 p.m. ET" (the
+        published baseline is the 4:15 p.m. option-market close, but the recorded default is
+        the 4:00 p.m. snapshot) and §9 asks for "~3:45-4:00 p.m. ET daily for entry". That is
+        the EQUITY session close - 4:00 p.m. (960), 1:00 p.m. (780) on a half day.
+
+        `ctx.session_close_min` is NOT that bound. The runner builds it from
+        `options_close_minute(today, universe[0])`, which for this strategy's ETF trio is the
+        OPTIONS close - equity close + 15 (975, not 960; 795, not 780 on 2026-11-27). Reading
+        the window off it pushed the whole entry PAST the brief's hard 4:00 p.m. bound
+        (16:00-16:15 ET - the post-close ETF book - instead of 15:45-16:00) and left the
+        documented window unreachable, so the strategy never entered where its brief, its
+        module docstring and its unit test say it enters. The published bound is a ceiling:
+        the window ends at the earlier of the runner's session bound and the equity close.
+        """
+        equity_close = int(session_close_minute(ctx.dt_et.date()))
+        close_min = min(int(ctx.session_close_min), equity_close)
+        return close_min - self.params.entry_lead_min, close_min
+
     # -- scan (rows 3-9, 18, 20) -------------------------------------------
     def scan(self, ctx) -> list:
-        p = self.params
-        if not (ctx.session_close_min - p.entry_lead_min <= ctx.minute
-                < ctx.session_close_min):             # row 7/§9: closing window only
+        start, end = self._entry_window(ctx)
+        if not (start <= ctx.minute < end):           # row 7/§9: closing window only
             return []
         today = ctx.dt_et.date()
         holding = {pos.underlying for pos in ctx.open_positions}   # row 20: one per underlying
