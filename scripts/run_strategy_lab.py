@@ -11,8 +11,10 @@ self-caps 60/min, 60+40 leaves headroom under the documented ~120/min). Nothing 
 script or its import closure can place an order.
 
 Fault containment: every strategy call is exception-wrapped; QUARANTINE_ERRORS_PER_DAY
-exceptions from one strategy disarms it for the day (its positions still get the global
-rails: expiry backstop + marks). One strategy's bug costs that strategy's day, nothing else.
+exceptions from one strategy disarms it for the day - its own scan() and manage() stop being
+called - while its OPEN positions still get the global rails, which are runner code: the marks
+(each stamped `quarantined_rail_only` so the ledger does not read as a strategy hold) and the
+expiry-day backstop. One strategy's bug costs that strategy's day, nothing else.
 
 Stop: runtime/STOP_DAY.flag (whole platform) or runtime/STOP_LAB.flag (lab only).
 Side effects live under main() - tests/test_keep_imports.py spec-loads this file top-level.
@@ -431,7 +433,19 @@ class StrategyLabCore:
         net = rec["ledgers"]["worst"]["net_pnl_usd"]
         self.log(f"EXIT {pos.position_id} rule={rule} worst=${net:.0f}")
 
-    def _manage_positions(self, sid: str, strat, ctx, quotes) -> None:
+    def _manage_positions(self, sid: str, strat, ctx, quotes, *,
+                          strategy_manage: bool = True) -> None:
+        """Mark each open combo, then run the global expiry-day backstop and (unless the
+        strategy is quarantined for the day) the strategy's own manage().
+
+        `strategy_manage=False` is the QUARANTINED path. A strategy that raised
+        QUARANTINE_ERRORS_PER_DAY times is disarmed for the day - no scan, no new entries, and
+        no further calls into its own code - but its OPEN combos are not abandoned: the module
+        docstring's fault-containment contract is explicit that "its positions still get the
+        global rails: expiry backstop + marks". Those two rails are runner code, not strategy
+        code, so they are exactly what a quarantine must leave running; skipping them let a
+        quarantined strategy's expiry-day combo ride past the backstop unclosed and unmarked.
+        """
         today = date.fromisoformat(self._day)
         for pos in list(self.positions.get(sid, [])):
             S = self._S_of(quotes, pos.underlying)
@@ -443,14 +457,21 @@ class StrategyLabCore:
                     {"event": "combo_mark_partial", "ts_epoch": time.time(),
                      "position_id": pos.position_id})
                 continue
+            # A quarantined mark is labelled as such: `action="hold"` with an empty rule would
+            # claim the strategy looked at the combo and chose to hold, when in fact no strategy
+            # decision was taken at all today. The rail's own closes still stamp their rule.
             self.ledger.strategy(sid).write_mark(build_combo_mark_record(
                 ts=time.time(), position_id=pos.position_id, strategy_id=sid,
-                legs_nbbo=book, S=S, state=dict(pos.carried), action="hold", rule=""))
+                legs_nbbo=book, S=S, state=dict(pos.carried), action="hold",
+                rule="" if strategy_manage else "quarantined_rail_only"))
             if (not strat.META.settle_at_expiry
                     and expiry_backstop_due(pos, today=today, minute=ctx.minute,
                                             session_close_min=ctx.session_close_min)):
                 self._close_position(sid, pos, "expiry_backstop", book, S,
                                      {"rail": "global", "minute": ctx.minute})
+                continue
+            if not strategy_manage:
+                pos.last_mark_ts = time.time()
                 continue
             action = self._wrap(sid, "manage", lambda: strat.manage(pos, ctx))
             if action is not None and action.action == "close":
@@ -524,9 +545,16 @@ class StrategyLabCore:
         blackout = in_blackout(now_dt, events=events) or ""
         now_mono = time.time()
         for sid in self.armed:
-            if self.quarantined.get(sid, 0) >= QUARANTINE_ERRORS_PER_DAY:
-                continue
             strat = self.strategies[sid]
+            # Quarantined for the day (QUARANTINE_ERRORS_PER_DAY exceptions): the strategy's
+            # own code is off - no scan, no new entries, no manage() - but the module
+            # docstring's fault-containment contract still applies to the combos it already
+            # holds ("its positions still get the global rails: expiry backstop + marks"), and
+            # those two rails are runner code. Skipping the whole sid instead dropped both:
+            # a quarantined strategy's expiry-day combo was neither marked nor backstopped, so
+            # it rode to the next day-roll and was settled at intrinsic - a different exit rule
+            # and a different P&L than the rail would have booked off the live NBBO.
+            quarantined = self.quarantined.get(sid, 0) >= QUARANTINE_ERRORS_PER_DAY
             ctx = StrategyContext(now_ts=now_mono, dt_et=now_dt, day=self._day, minute=minute,
                                   session_close_min=options_close_minute(
                                       today, next(iter(strat.META.universe), "SPY")),
@@ -536,7 +564,10 @@ class StrategyLabCore:
                                   open_positions=list(self.positions.get(sid, [])))
             if now_mono - self._mark_ts.get(sid, 0.0) >= strat.META.mark_interval_s:
                 self._mark_ts[sid] = now_mono
-                self._manage_positions(sid, strat, ctx, quotes)
+                self._manage_positions(sid, strat, ctx, quotes,
+                                       strategy_manage=not quarantined)
+            if quarantined:
+                continue
             room = strat.META.max_concurrent - len(self.positions.get(sid, []))
             if room <= 0 or now_mono - self._scan_ts.get(sid, 0.0) < strat.META.scan_interval_s:
                 continue
