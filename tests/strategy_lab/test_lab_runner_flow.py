@@ -206,6 +206,56 @@ def test_halted_underlying_vetoes_entry(tmp_path, monkeypatch):
         assert len(_read(s.entries_path)) == 1
 
 
+# --------------------------------------------------------------------- hub telemetry sink
+class RaisingClient:
+    """Duck-typed Tradier client whose every data call fails - the data-plane outage the hub's
+    own journal notes exist to make visible."""
+
+    def get_quotes(self, syms):
+        raise RuntimeError("feed down")
+
+    def get_option_expirations(self, u):
+        raise RuntimeError("feed down")
+
+    def get_option_chain(self, u, exp, greeks=False):
+        raise RuntimeError("feed down")
+
+    def get_daily_history(self, u, days=260):
+        raise RuntimeError("feed down")
+
+
+def test_core_attaches_the_lab_journal_to_a_real_hub(tmp_path, monkeypatch):
+    """The hub's data-plane notes must reach a ledger.
+
+    `build_hub` (the production constructor) has no ledger, so it builds the hub with the
+    no-op journal default: every hub note - quote/chain/history errors AND the budget
+    governor's `lab_data_degraded` shedding note - was silently discarded. An operator
+    investigating a strategy that stopped entering had no record that the shared data plane was
+    erroring or shedding, and the shedding note was the one signal that separates a
+    budget-starved funnel from a strategy defect. The core owns the lab journal, so it attaches
+    it to the hub; a failing tick's quote poll then lands in runtime/strategy_lab/lab_journal.
+    """
+    from atlas.strategy_lab.hub import MarketHub
+
+    strat = ScriptStrategy()
+    sid = strat.META.strategy_id
+    monkeypatch.setattr(rsl, "build_all", lambda: {sid: strat})
+    monkeypatch.setattr(rsl, "load_state", lambda: {sid: {"state": "armed", "cohort_pin": "",
+                                                          "note": ""}})
+    monkeypatch.setattr(rsl, "upcoming_events", lambda now: [])
+    monkeypatch.setattr(rsl, "in_blackout", lambda now, events=None: None)
+    hub = MarketHub(RaisingClient(), tmp_path)          # the production shape: no journal
+    assert hub.journal({"event": "dropped"}) is None     # default sink discards
+    core = rsl.StrategyLabCore(runtime_dir=tmp_path, log=lambda m: None, hub=hub,
+                               now_fn=lambda: MONDAY_10AM)
+    assert hub.journal == core.ledger.journal            # the core attached the lab journal
+    core.tick()                                          # the tick's quote poll fails
+    rows = _read(tmp_path / "strategy_lab" / "lab_journal.jsonl")
+    errs = [r for r in rows if r.get("event") == "hub_quote_error"]
+    assert errs and errs[-1]["n_syms"] == 1, rows
+    assert not [r for r in rows if r.get("event") == "dropped"]
+
+
 # --------------------------------------------------------------------- multi-expiry settlement
 class CalendarQuote:
     def __init__(self, bid, ask, last=0.0):
