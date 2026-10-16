@@ -116,6 +116,45 @@ def test_row_greeks_round_trip(tmp_path):
     assert MarketHub.row_greeks(opt_type="call", strike=K, S=S, mid=0.0, dte_days=dte) is None
 
 
+def test_degrade_note_survives_a_crossing_seen_by_a_never_shed_request(tmp_path):
+    """`lab_data_degraded` is the operator's only record that the shared data plane started
+    shedding its budget - and it was lost for the whole stretch whenever the 80% line was
+    first crossed by a request that is NOT shed.
+
+    `BudgetGovernor.allow` raises `entered_degraded` on the first request at/after the line,
+    and that call CONSUMES the latch; only a failed chain/expirations request journaled it.
+    The P0 quote poll is the first call on every tick and is never shed, so it swallowed the
+    note while the budget really WAS degraded - the next P3 scan chain is suppressed below.
+    The note is now taken at the observation point, so it is exactly once per stretch.
+    """
+    hub, client, clock, events = _hub(tmp_path, cap=10)
+    for i in range(8):
+        hub.chain("SPY", f"2026-08-{i:02d}")            # burn to the 80% shedding line
+    hub.poll_quotes(["SPY"], [])                         # P0 sees the crossing; never shed
+    assert hub.chain("SPY", "2026-09-18", priority=P3_SCAN_CHAIN) == []   # really degraded
+    assert [e["event"] for e in events].count("lab_data_degraded") == 1
+    hub.chain("QQQ", "2026-09-18", priority=P3_SCAN_CHAIN)                # no second note
+    assert [e["event"] for e in events].count("lab_data_degraded") == 1
+    # the window rolls off, so the next crossing is a NEW stretch and notes again
+    clock.advance(61)
+    for i in range(8):
+        hub.chain("IWM", f"2026-07-{i:02d}")
+    hub.poll_quotes(["SPY"], [])
+    assert hub.chain("SPY", "2026-10-16", priority=P3_SCAN_CHAIN) == []
+    assert [e["event"] for e in events].count("lab_data_degraded") == 2
+
+
+def test_degrade_note_survives_a_crossing_seen_by_a_history_read(tmp_path):
+    """The other silent consumer: a P2 daily-history read is allowed while the budget is only
+    degraded, so when IT crossed the line the note was swallowed as well."""
+    hub, client, clock, events = _hub(tmp_path, cap=10)
+    for i in range(8):
+        hub.chain("SPY", f"2026-08-{i:02d}")
+    assert hub.daily_history("SPY", days=30) != []       # P2 sees the crossing; allowed
+    assert hub.chain("SPY", "2026-09-18", priority=P3_SCAN_CHAIN) == []
+    assert [e["event"] for e in events].count("lab_data_degraded") == 1
+
+
 def test_file_fed_context(tmp_path):
     hub, _, _, _ = _hub(tmp_path)
     assert hub.vol_regime() is None and hub.earnings_week() == {}

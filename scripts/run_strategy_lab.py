@@ -14,6 +14,10 @@ Fault containment: every strategy call is exception-wrapped; QUARANTINE_ERRORS_P
 exceptions from one strategy disarms it for the day (its positions still get the global
 rails: expiry backstop + marks). One strategy's bug costs that strategy's day, nothing else.
 
+Data-plane telemetry: the core attaches the lab journal to the hub, so the hub's own notes
+(quote/chain/history errors and the budget governor's `lab_data_degraded` shedding note) are
+recorded in runtime/strategy_lab/lab_journal.jsonl instead of being discarded.
+
 Stop: runtime/STOP_DAY.flag (whole platform) or runtime/STOP_LAB.flag (lab only).
 Side effects live under main() - tests/test_keep_imports.py spec-loads this file top-level.
 """
@@ -148,6 +152,14 @@ class StrategyLabCore:
         self.log = log
         self.ledger = LabLedger(runtime_dir)
         self.hub = hub
+        # The hub's telemetry sink. build_hub (the production constructor) has no ledger, so it
+        # builds the hub with a no-op journal and every hub note - quote/chain/history errors
+        # AND the `lab_data_degraded` shedding note - was silently dropped: a data plane that
+        # was erroring or shedding its budget left no record anywhere. The core owns the lab
+        # journal, so it attaches it here (a duck-typed test hub without the hook is untouched).
+        attach_journal = getattr(self.hub, "attach_journal", None)
+        if callable(attach_journal):
+            attach_journal(self.ledger.journal)
         self.now_fn = now_fn or (lambda: datetime.now(NY))
         self.strategies = build_all()
         self.state = load_state()

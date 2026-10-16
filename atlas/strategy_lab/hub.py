@@ -106,6 +106,34 @@ class MarketHub:
         self._expirations: dict[str, CachedChain] = {}
         self._last_quotes: dict[str, tuple] = {}      # sym -> (bid, ask, ts)
 
+    def attach_journal(self, journal) -> None:
+        """Attach the process-level telemetry sink (the lab journal).
+
+        `build_hub` - the production constructor - has no ledger, so it built the hub with the
+        no-op default and every hub note (quote/chain/history errors AND the
+        `lab_data_degraded` shedding note) was silently discarded: an operator investigating a
+        strategy that stopped entering had no record that the shared data plane was erroring or
+        shedding its budget. The runner owns the lab journal and attaches it here, so those
+        records land in runtime/strategy_lab/lab_journal.jsonl like every other process event.
+        """
+        if journal is not None:
+            self.journal = journal
+
+    def _allow(self, priority: int) -> bool:
+        """One budget check PLUS the shedding note - the single place the budget is consulted.
+
+        `BudgetGovernor.allow` raises `entered_degraded` on the FIRST request at/after the 80%
+        shedding line, and that call CONSUMES the latch whatever its priority or outcome.
+        Journaling only from a failed chain/expirations request therefore lost the note for a
+        whole stretch whenever the crossing was first seen by a request that is not shed - the
+        P0 quote poll (first call on every tick) or a P2 daily-history read, both of which
+        ignore the shed decision. Taking the note at the observation point makes
+        `lab_data_degraded` exactly once per degraded stretch, as documented.
+        """
+        ok = self.governor.allow(priority)
+        self._note_degraded()
+        return ok
+
     # ---------------------------------------------------------------- quotes
     def poll_quotes(self, underlyings: list, leg_occs: list) -> dict:
         """ONE batched call for underlyings + all open leg OCCs (P0 - never shed).
@@ -113,7 +141,7 @@ class MarketHub:
         syms = sorted(set(underlyings) | set(leg_occs))
         if not syms:
             return {}
-        self.governor.allow(P0_EXIT_QUOTES)
+        self._allow(P0_EXIT_QUOTES)
         try:
             quotes = self.client.get_quotes(syms)
         except Exception as exc:  # noqa: BLE001 - feed fail-open
@@ -153,8 +181,7 @@ class MarketHub:
         c = self._expirations.get(u)
         if c and self.clock() - c.fetched < EXPIRATIONS_TTL_S:
             return c.rows
-        if not self.governor.allow(priority):
-            self._note_degraded()
+        if not self._allow(priority):
             return c.rows if c else []
         try:
             rows = self.client.get_option_expirations(u)
@@ -174,8 +201,7 @@ class MarketHub:
         ttl = self.governor.chain_ttl()
         if c and self.clock() - c.fetched < ttl:
             return c.rows
-        if not self.governor.allow(priority):
-            self._note_degraded()
+        if not self._allow(priority):
             if priority >= P3_SCAN_CHAIN:
                 return []                      # entries need fresh; fail to no-entry
             return c.rows if c else []         # manage path may use the stale copy
@@ -210,7 +236,7 @@ class MarketHub:
     # ---------------------------------------------------------------- daily history
     def daily_history(self, underlying: str, days: int = 260, *,
                       priority: int = P2_MANAGE_CHAIN) -> list:
-        if not self.governor.allow(priority):
+        if not self._allow(priority):
             return []
         try:
             return self.client.get_daily_history(underlying.upper(), days=days)
