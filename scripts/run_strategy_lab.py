@@ -16,6 +16,16 @@ rails: expiry backstop + marks). One strategy's bug costs that strategy's day, n
 
 Stop: runtime/STOP_DAY.flag (whole platform) or runtime/STOP_LAB.flag (lab only).
 Side effects live under main() - tests/test_keep_imports.py spec-loads this file top-level.
+
+Process-level fault containment (opts-fix-lab-tick-containment-v1): the tick loop contains
+EVERY tick failure, not only strategy calls - the run_options_shadow idiom ("one bad tick
+never kills the process"), which this skeleton is a clone of. A raised exception used to
+escape main() and end the process, and the launcher (launch_strategy_lab.ps1) respawns at
+most three times, then pages and GIVES UP FOR THE DAY: one transient failure in runner-side
+work - the mark/exit ledger appends and the day-roll settlement, which run outside _wrap -
+cost the whole session's marks, entries and expiry backstop. A failed tick is now logged,
+journaled once per consecutive stretch (`tick_error`, then `tick_recovered`), and retried on
+the next interval; the day-roll is idempotent, so the retry re-syncs from the ledger.
 """
 
 from __future__ import annotations
@@ -579,6 +589,19 @@ def build_hub(runtime_dir: Path, log) -> MarketHub | None:
         return None
 
 
+def _journal_tick(core, rec: dict) -> None:
+    """Best-effort process-journal row for a tick-level failure or recovery.
+
+    The lab journal is the auditable surface the EOD report reads, so a failing tick must
+    leave a record there and not only in the run log. The ledger may itself be what is
+    failing (a locked or unwritable file), so this never escalates - the run log already
+    carries the per-tick line."""
+    try:
+        core.ledger.journal({"ts_epoch": time.time(), **rec})
+    except Exception:  # noqa: BLE001 - telemetry must never escalate a failure
+        pass
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="ATLAS strategy lab (shadow-only)")
     ap.add_argument("--once", action="store_true", help="single tick then exit")
@@ -597,15 +620,35 @@ def main(argv=None) -> int:
     try:
         hub = None if args.no_hub else build_hub(runtime_dir, log)
         core = StrategyLabCore(runtime_dir=runtime_dir, log=log, hub=hub)
+        interval = max(1.0, float(args.interval))
+        fails = 0
         while True:
             stop = core.stop_requested()
             if stop:
                 log(f"stop flag {stop} - exiting cleanly")
                 return 0
-            core.tick()
+            # One bad tick must never kill the process (run_options_shadow idiom): a raise
+            # here used to end the run, and the launcher's 3-respawn budget is the whole day.
+            try:
+                core.tick()
+            except Exception as exc:  # noqa: BLE001 - containment is the point
+                fails += 1
+                detail = f"{type(exc).__name__}: {exc}"
+                log(f"tick error ({fails}): {detail}")
+                if fails == 1:                 # one journal line per stretch, not per tick
+                    _journal_tick(core, {"event": "tick_error", "where": "tick",
+                                         "detail": detail})
+                if args.once:
+                    return 1                   # a single-shot probe must not report success
+                time.sleep(interval)
+                continue
+            if fails:
+                log(f"tick recovered after {fails} failed tick(s)")
+                _journal_tick(core, {"event": "tick_recovered", "failed_ticks": fails})
+                fails = 0
             if args.once:
                 return 0
-            time.sleep(max(1.0, float(args.interval)))
+            time.sleep(interval)
     except KeyboardInterrupt:
         log("Ctrl-C - clean exit")
         return 0
